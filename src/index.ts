@@ -36,7 +36,7 @@
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
 
-export const PLUGIN_VERSION = "0.1.0" as const;
+export const PLUGIN_VERSION = "0.2.0" as const;
 
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
@@ -60,12 +60,18 @@ const GATEWAY_SUFFIX_INTL = ".api.intl.tcloudbasegateway.com";
  *   growth-plan notice: `hy4-preview` (1M ctx), `hy3` (256K ctx) and
  *   `deepseek-v4.1-flash` (1M ctx) are the three text models that can spend
  *   the gift quota. They need no console opt-in.
- * - `hy4` and `deepseek-v4.1-flash-1017` are NOT in the current official
- *   notice; they are carried over from the predecessor project
- *   (github.com/Le0nByte/opencode-cloudbase-auth) as disabled placeholders
- *   so users can re-enable them if their environment/channel still accepts
- *   them. Context/output numbers for the unverified entries are conservative
- *   placeholders.
+ * - `deepseek-v4.1-flash-1017` is NOT in the official notice, but I verified
+ *   it works through aiProxy in my own CloudBase environment (2026-11). It
+ *   is enabled by default; support may differ per environment — CloudBase
+ *   answers `AI_MODEL_NOT_SUPPORTED` where it is not available, and the
+ *   per-account model list follows the deployed function's allowlist (see
+ *   the `provider.models` hook).
+ * - `hy4` remains an unverified placeholder; it stays disabled until
+ *   verified the same way.
+ *
+ * `verified` here means "enabled by default", not "officially documented" —
+ * see the per-model notes above. Context/output numbers for entries without
+ * official specs are conservative placeholders.
  */
 interface ModelSpec {
   name: string;
@@ -79,7 +85,7 @@ const MODEL_CATALOG: Readonly<Record<string, ModelSpec>> = {
   "hy3": { name: "Hunyuan 3", context: 262_144, output: 16_384, verified: true },
   "deepseek-v4.1-flash": { name: "DeepSeek V4.1 Flash", context: 1_000_000, output: 16_384, verified: true },
   "hy4": { name: "Hunyuan 4 (unverified)", context: 131_072, output: 16_384, verified: false },
-  "deepseek-v4.1-flash-1017": { name: "DeepSeek V4.1 Flash 1017 (unverified)", context: 131_072, output: 16_384, verified: false },
+  "deepseek-v4.1-flash-1017": { name: "DeepSeek V4.1 Flash 1017", context: 131_072, output: 16_384, verified: true },
 };
 
 /* ------------------------------------------------------------------ *
@@ -659,15 +665,18 @@ async function bridgeFetch(this: BridgeContext, input: unknown, init?: { method?
   const stream = body.stream === true;
   const event = buildInvokeEvent(body, model);
   const payload = JSON.stringify(event);
-  if (payload.length > DEFAULT_MAX_EVENT_BYTES) {
+  // Measure real UTF-8 bytes: string .length counts UTF-16 code units and
+  // under-reports CJK content (each CJK char is typically 3 bytes but 1-2 units).
+  const payloadBytes = new TextEncoder().encode(payload).byteLength;
+  if (payloadBytes > DEFAULT_MAX_EVENT_BYTES) {
     return errorResponse(
       413,
-      `Conversation payload too large (${payload.length} bytes; limit ${DEFAULT_MAX_EVENT_BYTES}). Trim the history and retry.`,
+      `Conversation payload too large (${payloadBytes} bytes; limit ${DEFAULT_MAX_EVENT_BYTES} bytes). Trim the history and retry.`,
       { code: "PAYLOAD_TOO_LARGE" },
     );
   }
 
-  log("debug", `invoke ${cfg.functionName} model=${model} stream=${stream} bytes=${payload.length}`);
+  log("debug", `invoke ${cfg.functionName} model=${model} stream=${stream} bytes=${payloadBytes}`);
 
   const timeoutSignal = AbortSignal.timeout(cfg.timeoutMs);
   const signal = combineSignals(init?.signal, timeoutSignal);
@@ -721,7 +730,7 @@ async function bridgeFetch(this: BridgeContext, input: unknown, init?: { method?
     log("error", "aiProxy returned non-JSON body");
     return errorResponse(
       502,
-      `aiProxy returned a non-JSON body (first bytes: ${truncate(responseText.slice(0, 24), 60)}). Redeploy the function from this repository.`,
+      `aiProxy returned a non-JSON body (starts with: ${truncate(responseText.slice(0, 24), 60)}). Redeploy the function from this repository.`,
       { code: "INVALID_FUNCTION_JSON" },
     );
   }
@@ -916,16 +925,18 @@ export const CloudbaseBridge = async (
           const out: Record<string, Json> = {};
           for (const id of pingModels) {
             const known = MODEL_CATALOG[id];
-            if (base[id]) {
-              out[id] = { ...base[id] };
-            } else {
-              out[id] = {
-                name: known?.name ?? id,
-                limit: { context: known?.context ?? 131_072, output: known?.output ?? 16_384 },
-                tool_call: false,
-                ...(known && !known.verified ? { disabled: true } : {}),
-              };
-            }
+            const entry: Json = base[id]
+              ? { ...base[id] }
+              : {
+                  name: known?.name ?? id,
+                  limit: { context: known?.context ?? 131_072, output: known?.output ?? 16_384 },
+                  tool_call: false,
+                };
+            // The deployed function's allowlist explicitly accepts this id
+            // (it just said so in the ping), so a static placeholder
+            // `disabled` flag from the config-hook catalog must not survive.
+            delete entry.disabled;
+            out[id] = entry;
           }
           log("info", `account model list refreshed from aiProxy: ${pingModels.length} model(s)`);
           return out;

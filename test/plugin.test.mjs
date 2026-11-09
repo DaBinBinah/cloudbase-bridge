@@ -122,9 +122,10 @@ test("config hook declares provider with catalog; ??= preserves user config", as
   for (const id of ["hy3", "hy4", "hy4-preview", "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"]) {
     assert.ok(models[id], `catalog must contain ${id}`);
   }
-  assert.ok(models["hy4"].disabled, "unverified hy4 must be disabled");
-  assert.ok(models["deepseek-v4.1-flash-1017"].disabled, "unverified variant must be disabled");
+  assert.ok(models["hy4"].disabled, "unverified hy4 must stay disabled");
+  assert.ok(!models["deepseek-v4.1-flash-1017"].disabled, "verified 1017 must be enabled by default");
   assert.ok(!models["hy3"].disabled && !models["hy4-preview"].disabled && !models["deepseek-v4.1-flash"].disabled);
+  assert.equal(models["deepseek-v4.1-flash-1017"].name, "DeepSeek V4.1 Flash 1017");
   assert.equal(models["hy3"].tool_call, false);
 
   // Second run must not overwrite user config.
@@ -367,6 +368,39 @@ test("oversized conversations are rejected with 413", async () => {
   assert.equal(res.status, 413);
 });
 
+test("payload limit counts UTF-8 bytes, not JavaScript string length (CJK content)", async () => {
+  const { hooks } = await makePlugin();
+  const gw = mockGateway(async () => new Response(JSON.stringify(aiProxyCompletion()), { status: 200 }));
+  try {
+    const doFetch = await loaderFetch(hooks);
+
+    // Small CJK request passes normally.
+    const okRes = await doFetch(chatBody({ messages: [{ role: "user", content: "你好，世界" }] }));
+    assert.equal(okRes.status, 200);
+
+    // 200_000 CJK chars: only 200_000 UTF-16 code units (below the 512 KiB
+    // limit, so a naive .length check would forward it), but ~600_000 UTF-8
+    // bytes (over the limit).
+    const cjk = "好".repeat(200_000);
+    assert.ok(cjk.length < _internal.DEFAULT_MAX_EVENT_BYTES, "precondition: string length is under the limit");
+    assert.ok(
+      new TextEncoder().encode(cjk).byteLength > _internal.DEFAULT_MAX_EVENT_BYTES,
+      "precondition: UTF-8 byte count is over the limit",
+    );
+
+    const res = await doFetch(chatBody({ messages: [{ role: "user", content: cjk }] }));
+    assert.equal(res.status, 413);
+    const payload = await res.json();
+    assert.equal(payload.error.code, "PAYLOAD_TOO_LARGE");
+    const match = payload.error.message.match(/too large \((\d+) bytes; limit (\d+) bytes\)/);
+    assert.ok(match, `error message must report byte counts with byte units: ${payload.error.message}`);
+    assert.ok(Number(match[1]) > Number(match[2]), "reported size must exceed the limit");
+    assert.ok(Number(match[1]) > 600_000, "reported size must be the UTF-8 byte count, not the char count");
+  } finally {
+    gw.restore();
+  }
+});
+
 test("client-side timeout maps to 504 and network errors to 502", async () => {
   const { hooks } = await makePlugin();
 
@@ -426,19 +460,37 @@ test("provider.models refines the list from aiProxy ping; failures keep the stat
   const base = {
     hy3: { name: "Hunyuan 3", limit: { context: 262_144, output: 16_384 }, tool_call: false },
     "hy4-preview": { name: "Hunyuan 4 Preview", limit: { context: 1_000_000, output: 16_384 }, tool_call: false },
+    // Simulate stale config-hook entries carrying `disabled: true`.
+    hy4: { name: "Hunyuan 4 (unverified)", limit: { context: 131_072, output: 16_384 }, tool_call: false, disabled: true },
+    "deepseek-v4.1-flash-1017": { name: "DeepSeek V4.1 Flash 1017", limit: { context: 131_072, output: 16_384 }, tool_call: false, disabled: true },
   };
 
   const gw = mockGateway(async () =>
     new Response(
-      JSON.stringify({ ok: true, service: "aiProxy", version: "1.0.0", env: "env-test-1", models: ["hy3", "deepseek-v4.1-flash"] }),
+      JSON.stringify({
+        ok: true,
+        service: "aiProxy",
+        version: "1.0.0",
+        env: "env-test-1",
+        models: ["hy3", "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017", "hy4"],
+      }),
       { status: 200 },
     ),
   );
   try {
     const refined = await hooks.provider.models({ models: base }, { auth: fakeAuth() });
-    assert.deepEqual(Object.keys(refined).sort(), ["deepseek-v4.1-flash", "hy3"]);
+    assert.deepEqual(
+      Object.keys(refined).sort(),
+      ["deepseek-v4.1-flash", "deepseek-v4.1-flash-1017", "hy3", "hy4"],
+    );
     assert.equal(refined.hy3.name, "Hunyuan 3");
     assert.equal(refined["deepseek-v4.1-flash"].limit.context, 1_000_000);
+    // A model the deployed function's allowlist explicitly returns must not
+    // keep a stale `disabled: true` from the static catalog.
+    assert.equal(refined["deepseek-v4.1-flash-1017"].disabled, undefined, "1017 must lose its disabled flag");
+    assert.equal(refined.hy4.disabled, undefined, "ping-allowed hy4 must lose its disabled flag too");
+    // Models absent from the ping reply are dropped (hy4-preview not pinged).
+    assert.equal(refined["hy4-preview"], undefined);
 
     const pingBody = JSON.parse(gw.calls[0].init.body);
     assert.deepEqual(pingBody, { action: "ping" });

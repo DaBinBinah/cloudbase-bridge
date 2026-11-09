@@ -28,7 +28,7 @@ them:
       GitHub discovery polls at most every 10 minutes; new topics appear
       within minutes.
 
-Steps for the maintainer:
+Steps:
 
 1. Create the GitHub repository `cloudbase-bridge` and push everything
    (including `dist/`).
@@ -75,7 +75,7 @@ copy). A prepared entry lives at
 }
 ```
 
-Steps for the maintainer (only when you want the curated listing):
+Steps (only when you want the curated listing):
 
 1. Fork `magpie-community/plugins`, add the entry above to `registry.json`,
    and open a **PR**. Do not describe the plugin as accepted until merged.

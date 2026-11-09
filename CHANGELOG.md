@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [SemVer](https://semver.org/).
 
+## [0.2.0] - 2026-11-09
+
+- **Enable `deepseek-v4.1-flash-1017` by default.** I verified it
+  end-to-end through aiProxy in my own CloudBase environment (2026-11).
+  It is not part of the official growth-plan notice; availability may differ
+  per environment — CloudBase answers `AI_MODEL_NOT_SUPPORTED` where it is
+  unavailable. `hy4` remains an unverified, disabled placeholder.
+- `provider.models` no longer leaks a stale `disabled: true` for models the
+  deployed aiProxy allowlist explicitly returns in its `ping` reply (the
+  flag is stripped for every ping-allowed id).
+- The request payload size limit now measures real UTF-8 bytes
+  (`new TextEncoder().encode(payload).byteLength`) instead of JavaScript
+  string length, which under-counted CJK content (each CJK char is typically
+  3 UTF-8 bytes but 1 UTF-16 code unit). The 413 error message and the
+  debug log's `bytes=` field now report accurate byte counts.
+- Tests: new cases for the 1017 default-enabled state, disabled-flag
+  stripping on ping, UTF-8 byte accounting for CJK payloads, `hy4` staying
+  disabled, and the aiProxy allowlist containing `deepseek-v4.1-flash-1017`.
+
 ## [0.1.0] - 2026-11-09
 
 Initial release.
@@ -20,8 +39,7 @@ Initial release.
   Magpie's local auth store (`plugin-auth.json`, mode 600).
 - Model catalog (official growth-plan notice, verified 2026-11-09):
   `hy3`, `hy4-preview`, `deepseek-v4.1-flash` enabled;
-  `hy4`, `deepseek-v4.1-flash-1017` carried over from the previous project
-  as disabled placeholders.
+  `hy4`, `deepseek-v4.1-flash-1017` shipped as disabled placeholders.
 - Cloud function `aiProxy` (Event Function, `index.main`) using
   `@cloudbase/node-sdk` `ai.createModel("cloudbase")` + `generateText`,
   env ID read from `TCB_ENV`, model allowlist via `AI_PROXY_ALLOWED_MODELS`.

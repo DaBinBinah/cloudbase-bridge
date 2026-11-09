@@ -40,9 +40,12 @@
 
 /** Allowlist of callable models. Defaults to the superset used by the
  * plugin catalog: the three models confirmed by the official growth-plan
- * notice (checked 2026-11-09, https://docs.cloudbase.net/ai/ai-inspire-plan-new-models)
- * plus the two legacy ids carried over from the predecessor project.
- * Override with the AI_PROXY_ALLOWED_MODELS env var (comma-separated). */
+ * notice (checked 2026-11-09, https://docs.cloudbase.net/ai/ai-inspire-plan-new-models),
+ * plus `deepseek-v4.1-flash-1017` (verified through this proxy in my own
+ * environment, 2026-11; not in the official notice) and the unverified
+ * `hy4`. CloudBase itself rejects unsupported ids with
+ * AI_MODEL_NOT_SUPPORTED. Override with the AI_PROXY_ALLOWED_MODELS env var
+ * (comma-separated). */
 const DEFAULT_ALLOWED_MODELS = [
   "hy3",
   "hy4",

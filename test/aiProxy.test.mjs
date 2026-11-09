@@ -102,6 +102,18 @@ test("validateChatEvent rejects out-of-range sampling params and oversized input
   assert.match(tooBig.error.message, /too large/);
 });
 
+/* ---------------- allowlist ---------------- */
+
+test("default allowlist includes the verified deepseek-v4.1-flash-1017", () => {
+  assert.ok(_internal.DEFAULT_ALLOWED_MODELS.includes("deepseek-v4.1-flash-1017"));
+  const result = _internal.validateChatEvent({
+    model: "deepseek-v4.1-flash-1017",
+    messages: [{ role: "user", content: "hi" }],
+  });
+  assert.ok(!result.error, result.error?.message);
+  assert.equal(result.params.model, "deepseek-v4.1-flash-1017");
+});
+
 /* ---------------- buildChatCompletion / usage ---------------- */
 
 test("buildChatCompletion maps generateText result to chat.completion", () => {

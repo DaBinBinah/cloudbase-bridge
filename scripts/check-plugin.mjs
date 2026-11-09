@@ -61,7 +61,15 @@ function startMockGateway() {
       const event = JSON.parse(raw || "{}");
       if (event.action === "ping") {
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true, service: "aiProxy", version: "1.0.0", env: "env-mock", models: ["hy3", "deepseek-v4.1-flash"] }));
+        res.end(
+          JSON.stringify({
+            ok: true,
+            service: "aiProxy",
+            version: "1.0.0",
+            env: "env-mock",
+            models: ["hy3", "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"],
+          }),
+        );
         return;
       }
       res.writeHead(200, { "content-type": "application/json" });
@@ -140,7 +148,8 @@ await okAsync("provider.models refines the account model list via ping", async (
   const cfg = {};
   await hooksLive.config(cfg);
   const refined = await hooksLive.provider.models({ models: cfg.provider.cloudbase.models }, { auth });
-  assert.deepEqual(Object.keys(refined).sort(), ["deepseek-v4.1-flash", "hy3"]);
+  assert.deepEqual(Object.keys(refined).sort(), ["deepseek-v4.1-flash", "deepseek-v4.1-flash-1017", "hy3"]);
+  assert.equal(refined["deepseek-v4.1-flash-1017"].disabled, undefined, "ping-allowed model must not stay disabled");
 });
 
 await okAsync("end-to-end non-streaming request returns chat.completion JSON", async () => {

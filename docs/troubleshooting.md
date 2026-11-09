@@ -55,12 +55,17 @@ possible layers:
    `AI_PROXY_ALLOWED_MODELS`);
 3. **CloudBase itself** rejected it (upstream code `AI_MODEL_NOT_SUPPORTED`
    / `AI_MODEL_DISABLED` / `AI_MODEL_NOT_FOUND` — e.g. the disabled
-   placeholders `hy4` / `deepseek-v4.1-flash-1017`, or a model your
-   environment hasn't enabled).
+   placeholder `hy4`, or a model your environment does not support, which
+   can also happen for `deepseek-v4.1-flash-1017` in environments that
+   don't have it).
 
 **Fix.**
 - Use a confirmed growth-plan id: `hy3`, `hy4-preview`, `deepseek-v4.1-flash`
   (checked 2026-11-09; re-check the official notice).
+  `deepseek-v4.1-flash-1017` is enabled by default because I verified it in
+  my own environment (2026-11); it is not in the official notice — if your
+  environment answers `AI_MODEL_NOT_SUPPORTED`, trust your environment, not
+  this catalog.
 - If you intentionally enabled an extra model in your environment, add it to
   the function env var `AI_PROXY_ALLOWED_MODELS` (comma-separated) and
   enable it in your Magpie/OpenCode provider config.

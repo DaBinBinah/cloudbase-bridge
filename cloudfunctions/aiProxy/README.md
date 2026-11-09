@@ -78,7 +78,11 @@ with codes such as `INVALID_REQUEST`, `MODEL_NOT_ALLOWED`,
    CloudBase runtime automatically**. Optionally set
    `AI_PROXY_ALLOWED_MODELS` (comma-separated model ids) to restrict or
    extend the allowlist; the default is
-   `hy3,hy4,hy4-preview,deepseek-v4.1-flash,deepseek-v4.1-flash-1017`.
+   `hy3,hy4,hy4-preview,deepseek-v4.1-flash,deepseek-v4.1-flash-1017`
+   (`deepseek-v4.1-flash-1017` I verified in my own environment, though it
+   is not in the official growth-plan notice; `hy4` is an unverified
+   placeholder. CloudBase itself rejects ids it does not support with
+   `AI_MODEL_NOT_SUPPORTED`).
 5. Deploy, then verify with the console's inline test: invoke with
    `{"action":"ping"}` — expect `{"ok":true,"service":"aiProxy",...}`.
 

@@ -30,7 +30,7 @@
  * - `dist/` must be committed so the GitHub-topic discovery path can load
  *   the plugin straight from the repository.
  */
-export declare const PLUGIN_VERSION: "0.1.0";
+export declare const PLUGIN_VERSION: "0.2.0";
 /**
  * Model catalog.
  *
@@ -39,12 +39,18 @@ export declare const PLUGIN_VERSION: "0.1.0";
  *   growth-plan notice: `hy4-preview` (1M ctx), `hy3` (256K ctx) and
  *   `deepseek-v4.1-flash` (1M ctx) are the three text models that can spend
  *   the gift quota. They need no console opt-in.
- * - `hy4` and `deepseek-v4.1-flash-1017` are NOT in the current official
- *   notice; they are carried over from the predecessor project
- *   (github.com/Le0nByte/opencode-cloudbase-auth) as disabled placeholders
- *   so users can re-enable them if their environment/channel still accepts
- *   them. Context/output numbers for the unverified entries are conservative
- *   placeholders.
+ * - `deepseek-v4.1-flash-1017` is NOT in the official notice, but I verified
+ *   it works through aiProxy in my own CloudBase environment (2026-11). It
+ *   is enabled by default; support may differ per environment — CloudBase
+ *   answers `AI_MODEL_NOT_SUPPORTED` where it is not available, and the
+ *   per-account model list follows the deployed function's allowlist (see
+ *   the `provider.models` hook).
+ * - `hy4` remains an unverified placeholder; it stays disabled until
+ *   verified the same way.
+ *
+ * `verified` here means "enabled by default", not "officially documented" —
+ * see the per-model notes above. Context/output numbers for entries without
+ * official specs are conservative placeholders.
  */
 interface ModelSpec {
     name: string;
@@ -211,7 +217,7 @@ export declare const CloudbaseBridge: (input?: PluginInput, options?: PluginOpti
     };
 }>;
 export declare const _internal: {
-    PLUGIN_VERSION: "0.1.0";
+    PLUGIN_VERSION: "0.2.0";
     PROVIDER_ID: string;
     DEFAULT_FUNCTION_NAME: string;
     DEFAULT_TIMEOUT_MS: number;

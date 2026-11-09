@@ -34,7 +34,7 @@
  * Version & constants (single source of truth; no imports allowed —  *
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
-export const PLUGIN_VERSION = "0.1.0";
+export const PLUGIN_VERSION = "0.2.0";
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
 const PROVIDER_ID = "cloudbase";
@@ -51,7 +51,7 @@ const MODEL_CATALOG = {
     "hy3": { name: "Hunyuan 3", context: 262_144, output: 16_384, verified: true },
     "deepseek-v4.1-flash": { name: "DeepSeek V4.1 Flash", context: 1_000_000, output: 16_384, verified: true },
     "hy4": { name: "Hunyuan 4 (unverified)", context: 131_072, output: 16_384, verified: false },
-    "deepseek-v4.1-flash-1017": { name: "DeepSeek V4.1 Flash 1017 (unverified)", context: 131_072, output: 16_384, verified: false },
+    "deepseek-v4.1-flash-1017": { name: "DeepSeek V4.1 Flash 1017", context: 131_072, output: 16_384, verified: true },
 };
 /* ------------------------------------------------------------------ *
  * Small utilities.                                                   *
@@ -470,10 +470,13 @@ async function bridgeFetch(input, init) {
     const stream = body.stream === true;
     const event = buildInvokeEvent(body, model);
     const payload = JSON.stringify(event);
-    if (payload.length > DEFAULT_MAX_EVENT_BYTES) {
-        return errorResponse(413, `Conversation payload too large (${payload.length} bytes; limit ${DEFAULT_MAX_EVENT_BYTES}). Trim the history and retry.`, { code: "PAYLOAD_TOO_LARGE" });
+    // Measure real UTF-8 bytes: string .length counts UTF-16 code units and
+    // under-reports CJK content (each CJK char is typically 3 bytes but 1-2 units).
+    const payloadBytes = new TextEncoder().encode(payload).byteLength;
+    if (payloadBytes > DEFAULT_MAX_EVENT_BYTES) {
+        return errorResponse(413, `Conversation payload too large (${payloadBytes} bytes; limit ${DEFAULT_MAX_EVENT_BYTES} bytes). Trim the history and retry.`, { code: "PAYLOAD_TOO_LARGE" });
     }
-    log("debug", `invoke ${cfg.functionName} model=${model} stream=${stream} bytes=${payload.length}`);
+    log("debug", `invoke ${cfg.functionName} model=${model} stream=${stream} bytes=${payloadBytes}`);
     const timeoutSignal = AbortSignal.timeout(cfg.timeoutMs);
     const signal = combineSignals(init?.signal, timeoutSignal);
     let upstream;
@@ -519,7 +522,7 @@ async function bridgeFetch(input, init) {
     }
     catch {
         log("error", "aiProxy returned non-JSON body");
-        return errorResponse(502, `aiProxy returned a non-JSON body (first bytes: ${truncate(responseText.slice(0, 24), 60)}). Redeploy the function from this repository.`, { code: "INVALID_FUNCTION_JSON" });
+        return errorResponse(502, `aiProxy returned a non-JSON body (starts with: ${truncate(responseText.slice(0, 24), 60)}). Redeploy the function from this repository.`, { code: "INVALID_FUNCTION_JSON" });
     }
     // aiProxy error envelope (it always reports failures inside HTTP 200).
     if (isPlainObject(functionResult) && isPlainObject(functionResult.error)) {
@@ -680,17 +683,18 @@ export const CloudbaseBridge = async (input = {}, options = {}) => {
                     const out = {};
                     for (const id of pingModels) {
                         const known = MODEL_CATALOG[id];
-                        if (base[id]) {
-                            out[id] = { ...base[id] };
-                        }
-                        else {
-                            out[id] = {
+                        const entry = base[id]
+                            ? { ...base[id] }
+                            : {
                                 name: known?.name ?? id,
                                 limit: { context: known?.context ?? 131_072, output: known?.output ?? 16_384 },
                                 tool_call: false,
-                                ...(known && !known.verified ? { disabled: true } : {}),
                             };
-                        }
+                        // The deployed function's allowlist explicitly accepts this id
+                        // (it just said so in the ping), so a static placeholder
+                        // `disabled` flag from the config-hook catalog must not survive.
+                        delete entry.disabled;
+                        out[id] = entry;
                     }
                     log("info", `account model list refreshed from aiProxy: ${pingModels.length} model(s)`);
                     return out;

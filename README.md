@@ -2,245 +2,113 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-A **[Magpie](https://usemagpie.ai) / OpenCode provider plugin** that turns Tencent
-CloudBase's "小程序成长计划" (mini-program growth plan) AI quota into a normal
-OpenAI-compatible provider, by way of **your own** `aiProxy` cloud function.
+Bring the AI quota of Tencent CloudBase's "小程序成长计划" (mini-program growth plan) into [Magpie](https://usemagpie.ai) as an ordinary OpenAI-compatible provider, through an `aiProxy` cloud function you deploy yourself. Once set up, it's just another provider on your account that any agent can use.
 
-> **Independence disclaimer.** This is a community project. It is **not**
-> reviewed, endorsed, or curated by Magpie, and it is **not** affiliated with
-> Tencent Cloud. The model availability notes below are transcriptions of
-> Tencent's public documentation with the date they were checked — verify
-> against the official pages before relying on them.
+> Community project: not affiliated with Magpie or Tencent Cloud, and not reviewed or curated by Magpie.
 
----
+## Why a cloud function in the middle?
 
-## Why a cloud function?
-
-The growth-plan gift quota can only be spent from **CloudBase SDK channels**
-(the WeChat Mini Program SDK, the CloudBase server SDKs, or the console).
-Calling the HTTP AI model endpoints directly fails:
+The gift quota only pays out on CloudBase SDK channels — calling the `/v1/ai/*` model endpoints directly is rejected (`403 AI_CHANNEL_NOT_ALLOWED`). So the plugin never talks to those endpoints. It calls your `aiProxy` cloud function through the official function-invocation endpoint, and the function calls the model with `@cloudbase/node-sdk`, which is allowed:
 
 ```
-POST https://{envId}.api.tcloudbasegateway.com/v1/ai/…/chat/completions
-→ 403 AI_CHANNEL_NOT_ALLOWED
+Agent ─► magpie gateway ─► plugin ── POST /v1/functions/aiProxy ──► aiProxy (your env) ── SDK ──► model
 ```
 
-So this plugin never touches `/v1/ai/*`. Instead it invokes a normal
-(Event) cloud function — named **`aiProxy`** — through the official
-**function-invocation endpoint**, and that function calls the model with
-`@cloudbase/node-sdk`, which is an allowed channel:
-
-```
-Agent ──► magpie gateway ──► plugin fetch (this repo)
-                               │  POST https://{envId}.api.tcloudbasegateway.com/v1/functions/aiProxy
-                               │  Authorization: Bearer <CloudBase API Key>
-                               ▼
-                          aiProxy (your CloudBase env)
-                               │  @cloudbase/node-sdk
-                               │  ai.createModel("cloudbase").generateText({ model, messages })
-                               ▼
-                          hy3 / hy4-preview / deepseek-v4.1-flash
-```
-
-The function returns **one-shot** OpenAI Chat Completions JSON. The plugin
-adapts it and **synthesizes SSE** (role chunk → content chunks → final chunk
-→ `data: [DONE]`) when the agent requested `stream: true`. Magpie converts
-between whatever API your agent speaks and Chat Completions, so any agent
-works.
+The function returns one complete result; the plugin reshapes it into OpenAI Chat Completions, and synthesizes SSE locally when the agent asked to stream.
 
 ## Models
 
-Growth-plan gift quota, per the
-[official notice](https://docs.cloudbase.net/ai/ai-inspire-plan-new-models)
-(checked **2026-11-09** — re-check before relying on this):
+| Model ID | Context |
+| --- | --- |
+| `hy3` | 256K |
+| `hy4` | 1M |
+| `hy4-preview` | 1M |
+| `deepseek-v4.1-flash` | 1M |
+| `deepseek-v4.1-flash-1017` | 1M |
 
-| Model id | Context | Images | Status in this plugin |
-| --- | --- | --- | --- |
-| `hy3` | 256K | — | enabled |
-| `hy4-preview` | 1M | — | enabled |
-| `deepseek-v4.1-flash` | 1M | supported by the model, **not forwarded** by this proxy | enabled |
-| `hy4` | ? | ? | **disabled** placeholder (not in the current official notice) |
-| `deepseek-v4.1-flash-1017` | ? | ? | **disabled** placeholder (not in the current official notice) |
-
-Notes:
-
-- None of the growth-plan models need a console opt-in; token usage is
-  deducted from the gift pack automatically.
-- The two placeholders are carried over from the predecessor project
-  ([opencode-cloudbase-auth](https://github.com/Le0nByte/opencode-cloudbase-auth))
-  but are **not** in the current official notice, so they ship disabled. You
-  can re-enable them in your Magpie/OpenCode config, and widen the function's
-  allowlist via `AI_PROXY_ALLOWED_MODELS` — CloudBase itself decides what
-  actually works and answers `AI_MODEL_NOT_SUPPORTED` otherwise.
-- Models called outside the gift plan bill against your Token Credits
-  resource pack (managed group `cloudbase`).
+No console opt-in needed; usage is deducted from the gift pack automatically. Availability can vary per environment — if CloudBase answers `AI_MODEL_NOT_SUPPORTED`, go by what your environment actually supports.
 
 ## What you need
 
-1. A CloudBase environment (growth plan or an active Token Credits pack).
-2. The **aiProxy function deployed** to that environment — see
-   [`cloudfunctions/aiProxy/README.md`](cloudfunctions/aiProxy/README.md).
-3. A **server-side CloudBase API Key**, created in the console at
-   [tcb.cloud.tencent.com → Environment settings → API Key](https://tcb.cloud.tencent.com/dev?#/identity/token-management).
+1. A CloudBase environment with the growth plan (or an active Token Credits pack);
+2. the `aiProxy` function deployed in that environment (next section);
+3. a server-side API Key, created in the console under Environment settings → API Key.
 
-> ⚠️ **The API Key is the highest-privilege credential of the environment**
-> (administrator permissions; it bypasses per-user data access checks).
-> Keep it on your machine only. This plugin sends it exclusively as the
-> `Authorization: Bearer` header of the function-invocation request and
-> never writes it to source code, default config, logs, or error payloads.
-> Magpie stores logins in `~/.config/magpie/plugin-auth.json` with mode 600.
+> The API Key carries full admin rights over the environment. It lives only in Magpie's local auth store (`~/.config/magpie/plugin-auth.json`, mode 600) — don't commit it anywhere or hand it to anyone.
 
-## Install & login (Magpie)
+## Deploy aiProxy
+
+Full steps (console upload, CLI, common pitfalls) live in [`cloudfunctions/aiProxy/README.md`](cloudfunctions/aiProxy/README.md). Quick CLI version:
 
 ```bash
-# from npm (after you publish)
-magpie plugin add opencode-cloudbase-bridge
+cp cloudbaserc.example.json cloudbaserc.json   # set envId to yours
+tcb login
+tcb fn deploy aiProxy --force
+tcb fn invoke aiProxy --params '{"action":"ping"}'   # expect {"ok":true,...}
+```
 
-# or straight from this GitHub repo
-magpie plugin add DaBinBinah/cloudbase-bridge
+Key points: a normal Event Function (not an HTTP function), Nodejs18.15 or newer, timeout 120 s, cloud dependency install enabled. No need to configure the environment id — the runtime injects `TCB_ENV` automatically. To add or remove models, set the function's `AI_PROXY_ALLOWED_MODELS` env var (comma-separated).
 
-# or load a local checkout in place
-magpie plugin add ./cloudbase-bridge
+## Install & login
 
+```bash
+magpie plugin add DaBinBinah/cloudbase-bridge   # or: the npm package opencode-cloudbase-bridge, or ./cloudbase-bridge for a local checkout
 magpie plugin login cloudbase
-#   1. paste your CloudBase server API Key
-#   2. enter your environment ID   (e.g. cloud1-2a3b4c5d6e7f)
-#   3. pick the region             (中国大陆 default / 国际站)
-#   4. cloud function name         (Enter = aiProxy)
 ```
 
-Login answers are stored **per account** in Magpie's local auth store
-(`metadata`: envId, region, functionName). Nothing is written into the repo
-or npm package. Logout removes them:
+Login walks you through the API Key, the environment ID, the region (mainland China / international), and the function name (press Enter to keep `aiProxy`). Models then appear as `cloudbase/hy3`, `cloudbase/hy4-preview`, and so on (if the `cloudbase` id is already taken, Magpie renames the provider to `cloudbase-plugin` — both prefixes work). Which models an account actually gets is decided by your deployed function's allowlist; the plugin queries it after login.
 
-```bash
-magpie plugin logout cloudbase
-```
+Sign out with `magpie plugin logout cloudbase`.
 
-In the Magpie app: open **插件**, add the plugin (npm name / `github:owner/repo` /
-folder path), then sign in on the provider row. Model names appear as
-`cloudbase/hy3`, `cloudbase/hy4-preview`, `cloudbase/deepseek-v4.1-flash`
-(if Magpie already uses the `cloudbase` id, it becomes `cloudbase-plugin/…`
-automatically — the plugin accepts both prefixes).
+## Try it in a sandbox first
 
-## Sandbox testing (does not touch your real Magpie data)
+None of this touches your real magpie config or logins:
 
 ```bash
 sb=$(mktemp -d)
 m() { env HOME=$sb XDG_CONFIG_HOME=$sb/.config XDG_CACHE_HOME=$sb/.cache MAGPIE_ADDR=127.0.0.1:3499 magpie "$@"; }
-m plugin add ./cloudbase-bridge   </dev/null
-m plugin --json                   # hook/summary/errors reported by the host
-m plugin login cloudbase          # walk every prompt
-m provider test cloudbase         # tiny chat round-trip through aiProxy
-m provider test cloudbase hy3     # one model only
-m quota                           # usage hook (not implemented; see Limitations)
-m plugin logout cloudbase
+m plugin add ./cloudbase-bridge </dev/null
+m plugin login cloudbase
+m provider test cloudbase        # or a single model: m provider test cloudbase hy3
 ```
 
-No Magpie installed, or want to try the plugin logic without a CloudBase
-environment? Point it at the bundled mock gateway:
+No CloudBase environment yet? Walk the flow against the bundled mock gateway:
 
 ```bash
-node scripts/mock-ai-proxy.mjs --port 8787            # terminal 1
-# terminal 2 (sandbox as above), then:
-m plugin options <plugin-short-name> '{"gatewayBaseUrl":"http://127.0.0.1:8787"}'
+node scripts/mock-ai-proxy.mjs --port 8787
+m plugin options cloudbase-bridge '{"gatewayBaseUrl":"http://127.0.0.1:8787"}'
 ```
 
-> `gatewayBaseUrl` is a **testing-only** option. It redirects every request
-> — including your API Key header — to that URL. Remove the option
-> (`magpie plugin options <name> off`) for real use, and never point it at
-> an endpoint you don't control.
+`gatewayBaseUrl` is for testing only — it sends every request, including the API Key header, to that URL. Clear it afterwards with `m plugin options cloudbase-bridge off`.
 
-## Configuration reference
+## Options
 
-| What | Where | Values |
+| Option | What it does | Default |
 | --- | --- | --- |
-| Environment ID / region / function name | login `prompts` (stored per account) | e.g. `cloud1-…`, `cn`/`intl`, `aiProxy` |
-| Same values as fallbacks | plugin options (`plugins.json` → options) | `envId`, `region`, `functionName` — useful under plain OpenCode, where prompts may not be rendered |
-| Invoke timeout | option `timeoutMs` | default 150000 ms (above the recommended 120 s function timeout) |
-| Testing gateway override | option `gatewayBaseUrl` | unset in production |
-| Model allowlist | function env var `AI_PROXY_ALLOWED_MODELS` | comma-separated ids; default `hy3,hy4,hy4-preview,deepseek-v4.1-flash,deepseek-v4.1-flash-1017` |
-| Function timeout | CloudBase function config | **120 s** recommended |
+| `envId` / `region` / `functionName` | fallbacks beyond the login answers (handy under plain OpenCode, where the login prompts may not render) | — / `cn` / `aiProxy` |
+| `timeoutMs` | how long one function invocation may take | 150000 |
+| `gatewayBaseUrl` | testing-only gateway URL override | unset |
 
-Per-account values win over plugin options. The `provider.models` hook pings
-aiProxy (`{"action":"ping"}`) and shows exactly the models the deployed
-function's allowlist accepts; if the ping fails, the static catalog is kept.
+## When something goes wrong
 
-## Local development
+Errors come back as OpenAI-style `{ error: { message, code } }`, and the message usually says what happened. The common ones: `FUNCTIONS_NOT_FOUND` (function not deployed, or wrong environment), `AI_CHANNEL_NOT_ALLOWED` (the function must call the model via the Node SDK), `AI_MODEL_NOT_SUPPORTED` (model not available in your environment), 401 `PERMISSION_DENIED` (wrong or wrong-type API Key), timeouts, and `EXCEED_TOKEN_QUOTA_LIMIT` (quota spent or expired). Fixes for each are in [`docs/troubleshooting.md`](docs/troubleshooting.md).
+
+## Known limitations
+
+- No true streaming: the upstream reply is one-shot, SSE is synthesized locally, so the first token only arrives when generation finishes;
+- no tool calling, no image input, and `max_tokens` is ignored (the SDK channel takes `{ model, messages, temperature, topP }` only);
+- very long outputs can hit the function's 120 s timeout;
+- no quota reporting (no official API for it); the gift quota itself expires (6 months).
+
+## Development
 
 ```bash
 npm install
-npm run check      # typecheck (tsc) + build + node --test + host-like load check
-npm test           # build + unit tests (32 tests, no network needed)
-node scripts/check-plugin.mjs   # loads dist/ like Magpie does, end-to-end vs a mock gateway
-node scripts/mock-ai-proxy.mjs  # standalone mock of the gateway/function
+npm run check     # typecheck + build + 34 unit tests + host-like load check — no network, no real credentials
 ```
 
-**Verified in this repository** (macOS, Node 24, TypeScript 5.9): `tsc
---noEmit` clean, 32/32 unit tests pass, and the host-like load check passes
-9/9 (module shape, config hook, auth prompts, loader, ping-driven model
-list, non-streaming + streaming round-trips, `FUNCTIONS_NOT_FOUND` and bad-key
-error mapping, no credential leakage in logs).
-
-**NOT verified here — run these yourself against a real environment:** the
-Magpie sandbox commands above, a real `aiProxy` deployment + `ping`, a real
-chat completion through the growth plan, and quota behavior. This project
-makes no claims about those until you run them.
-
-## Limitations (by design, not bugs)
-
-- **No true streaming.** The upstream reply is one JSON document; SSE is
-  synthesized locally, so time-to-first-token equals full generation time.
-  Short answers feel fine; long ones feel slow (same trade-off as the
-  predecessor project).
-- **No tool calling.** The documented `generateText` input carries
-  `{ model, messages, temperature?, topP? }` only — `tools`/`tool_choice`
-  are not forwarded, and the catalog declares `tool_call: false`.
-- **No image input.** OpenAI-style image parts are rejected with
-  `IMAGE_INPUT_NOT_SUPPORTED` (the SDK channel documents string content).
-- **`max_tokens` is ignored** (not part of the documented SDK input).
-- **Cloud function timeout truncates long outputs** — raise the function
-  timeout to 120 s; the plugin's invoke timeout defaults to 150 s.
-- **No usage/quota reporting** (`auth.usage`): CloudBase documents no HTTP
-  API for growth-plan gift-pack balances, so the hook is not implemented.
-- Growth-plan quota **expires** (6 months per the program terms).
-
-## Differences from opencode-cloudbase-auth
-
-This project replaces the predecessor and follows the current official docs
-where the old code lagged:
-
-| Topic | opencode-cloudbase-auth | cloudbase-bridge |
-| --- | --- | --- |
-| Model group | `createModel(provider)` with default `hunyuan-v3` | `createModel("cloudbase")` per the [official notice](https://docs.cloudbase.net/ai/ai-inspire-plan-new-models) |
-| Model catalog | `hy3, hy4, hy4-preview, deepseek-v4.1-flash, deepseek-v4.1-flash-1017` | the 3 models confirmed by the notice enabled; the other 2 kept as disabled placeholders with source + date |
-| Env id | collected at login | collected at login; also read by the function from `TCB_ENV` (runtime-injected) |
-| Region | domestic gateway only | `cn` / `intl` gateway selection at login |
-| Model list | static | refined per account from aiProxy's allowlist via `ping` |
-| Language / shape | single `index.mjs` | TypeScript source, built `dist/` committed (required for Magpie's GitHub discovery), tests + load check |
-
-## Repository layout
-
-```
-├── package.json              # npm package + magpie metadata + plugin entry
-├── src/index.ts              # plugin source (TypeScript, zero runtime deps)
-├── dist/index.js             # built entry — committed (GitHub discovery needs it)
-├── cloudfunctions/aiProxy/   # the cloud function (Event Function, index.main)
-├── cloudbaserc.example.json  # tcb CLI deploy config
-├── test/                     # unit tests (node --test)
-├── scripts/                  # host-like load check + mock gateway
-├── docs/troubleshooting.md   # FUNCTIONS_NOT_FOUND, AI_CHANNEL_NOT_ALLOWED, …
-├── docs/publish-checklist.md # GitHub release + Magpie listing steps
-└── examples/registry-entry.json  # magpie-community registry.json entry
-```
-
-## Publish / list it (maintainers)
-
-See [`docs/publish-checklist.md`](docs/publish-checklist.md) for the two
-independent paths: the unofficial **GitHub topic discovery**
-(`magpie-plugin`) and the curated **magpie-community registry** (separate PR).
-Nothing in this repository has been submitted anywhere yet.
+Publishing and listing steps are in [`docs/publish-checklist.md`](docs/publish-checklist.md).
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE)
