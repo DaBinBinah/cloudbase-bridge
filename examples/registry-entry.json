@@ -1,0 +1,9 @@
+{
+  "package": "opencode-cloudbase-bridge",
+  "name": "CloudBase Bridge",
+  "providers": ["cloudbase"],
+  "summary": {
+    "en": "Tencent CloudBase (mini-program growth plan) models via your own aiProxy cloud function.",
+    "zh": "通过你自部署的 aiProxy 云函数，把腾讯云开发（小程序成长计划）的 AI 额度变成供应商。"
+  }
+}

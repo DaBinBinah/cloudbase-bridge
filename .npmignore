@@ -1,0 +1,13 @@
+# npm publish uses the "files" allowlist in package.json, which already
+# restricts the package to dist/, cloudfunctions/, cloudbaserc.example.json,
+# README.md and LICENSE. This .npmignore is defense-in-depth for anything
+# that might be pulled in unexpectedly.
+src/
+test/
+scripts/
+docs/
+examples/
+node_modules/
+*.tsbuildinfo
+.DS_Store
+*.log

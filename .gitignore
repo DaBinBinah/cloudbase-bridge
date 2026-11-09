@@ -1,0 +1,20 @@
+# Dependencies are never committed.
+node_modules/
+
+# Build metadata
+*.tsbuildinfo
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+
+# Local scratch (never commit real credentials or captured traffic)
+test-tmp/
+*.env
+.env.*
+
+# NOTE: dist/ is intentionally NOT ignored.
+# Magpie's "Unofficial plugins - GitHub" discovery installs the repo as-is,
+# so the built entry (dist/index.js) must be committed to the repository.

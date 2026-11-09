@@ -1,0 +1,59 @@
+{
+  "name": "opencode-cloudbase-bridge",
+  "version": "0.1.0",
+  "description": "Magpie/OpenCode provider plugin that bridges Tencent CloudBase 小程序成长计划 models through an aiProxy cloud function (OpenAI Chat Completions compatible, SSE synthesized client-side)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./server": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "cloudfunctions",
+    "cloudbaserc.example.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "magpie",
+    "magpie-plugin",
+    "cloudbase",
+    "provider"
+  ],
+  "license": "MIT",
+  "author": "cloudbase-bridge contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DaBinBinah/cloudbase-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DaBinBinah/cloudbase-bridge/issues"
+  },
+  "homepage": "https://github.com/DaBinBinah/cloudbase-bridge#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && node --test",
+    "check": "npm run typecheck && npm run test && node scripts/check-plugin.mjs",
+    "mock": "node scripts/mock-ai-proxy.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.6.0"
+  },
+  "magpie": {
+    "name": "CloudBase Bridge",
+    "summary": {
+      "en": "Use your Tencent CloudBase (mini-program growth plan) AI quota as an OpenCode provider via your own aiProxy cloud function.",
+      "zh": "通过你自部署的 aiProxy 云函数，把腾讯云开发（小程序成长计划）的 AI 额度变成 OpenCode 供应商。"
+    },
+    "icon": "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Crect%20width='64'%20height='64'%20rx='14'%20fill='%230b6cff'/%3E%3Cpath%20d='M20%2040a10%2010%200%200%201%202-19.8A14%2014%200%200%201%2049%2024a9%209%200%200%201-1%2016H20z'%20fill='%23fff'/%3E%3Cpath%20d='M22%2048l9-7h-5.5l7.5-8-2.5%2011h4.5l-9%209%201.5-7.5z'%20fill='%23ffd200'/%3E%3C/svg%3E",
+    "maxConcurrency": 4
+  }
+}

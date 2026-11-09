@@ -1,0 +1,10 @@
+{
+  "name": "aiProxy",
+  "version": "1.0.0",
+  "description": "CloudBase Event Function that proxies CloudBase AI models (growth plan) as an OpenAI Chat Completions JSON reply for the CloudBase Bridge plugin",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "@cloudbase/node-sdk": "^3.16.0"
+  }
+}

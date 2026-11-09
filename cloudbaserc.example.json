@@ -1,0 +1,16 @@
+{
+  "$schema": "https://framework-1258016615.tcloudbaseapp.com/cloudbase-rc-5000.json",
+  "envId": "YOUR-ENV-ID",
+  "functionRoot": "./cloudfunctions",
+  "functions": [
+    {
+      "name": "aiProxy",
+      "timeout": 120,
+      "memorySize": 256,
+      "runtime": "Nodejs18.15",
+      "installDependency": true,
+      "envVariables": {},
+      "triggers": []
+    }
+  ]
+}
