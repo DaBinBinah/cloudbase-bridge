@@ -6,6 +6,8 @@ Bring the AI quota of Tencent CloudBase's "小程序成长计划" (mini-program 
 
 > Community project: not affiliated with Magpie or Tencent Cloud, and not reviewed or curated by Magpie.
 
+![Growth-plan gift quota in the CloudBase console: 1B tokens + 100K image generations](docs/images/growth-plan-quota.png)
+
 ## Why a cloud function in the middle?
 
 The gift quota only pays out on CloudBase SDK channels — calling the `/v1/ai/*` model endpoints directly is rejected (`403 AI_CHANNEL_NOT_ALLOWED`). So the plugin never talks to those endpoints. It calls your `aiProxy` cloud function through the official function-invocation endpoint, and the function calls the model with `@cloudbase/node-sdk`, which is allowed:
