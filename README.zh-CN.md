@@ -6,6 +6,8 @@
 
 > 社区项目：和 Magpie、腾讯云都没有关系，也没有经过 Magpie 官方审核或收录。
 
+![「小程序成长计划」赠送额度：10 亿 Token + 10 万张生图（云开发控制台截图）](docs/images/growth-plan-quota.png)
+
 ## 为什么要经过一个云函数？
 
 成长计划送的额度只认 CloudBase SDK 这条通道，直接去调 `/v1/ai/*` 模型端点会被拒（`403 AI_CHANNEL_NOT_ALLOWED`）。所以这个插件不直连模型，而是走官方的函数调用端点，让你环境里的 `aiProxy` 云函数用 `@cloudbase/node-sdk` 去调模型——这条路是允许的：
