@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [SemVer](https://semver.org/).
 
+## [0.2.1] - 2026-11-10
+
+- Replace the plugin icon with the project logo (sprout + network) in
+  `magpie.icon` — used by Magpie's discovery cards and installed list
+  (GitHub-topic and npm sources alike).
+
 ## [0.2.0] - 2026-11-09
 
 - **Enable `deepseek-v4.1-flash-1017` by default.** I verified it
