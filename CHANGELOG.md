@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [SemVer](https://semver.org/).
 
+## [0.2.3] - 2026-11-12
+
+- Replace the shields.io image badge with a plain text link to the
+  repository — Magpie's detail page does not reliably render remote
+  images, so the GitHub link was invisible there.
+
 ## [0.2.2] - 2026-11-12
 
 - Add a GitHub badge to both READMEs (renders as a button in Magpie's plugin
