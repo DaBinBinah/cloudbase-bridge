@@ -1,6 +1,6 @@
 {
   "name": "opencode-cloudbase-bridge",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Magpie/OpenCode provider plugin that bridges Tencent CloudBase 小程序成长计划 models through an aiProxy cloud function (OpenAI Chat Completions compatible, SSE synthesized client-side)",
   "type": "module",
   "main": "./dist/index.js",

@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [SemVer](https://semver.org/).
 
+## [0.2.2] - 2026-11-12
+
+- Add a GitHub badge to both READMEs (renders as a button in Magpie's plugin
+  detail page and on npm, linking to the repository).
+
 ## [0.2.1] - 2026-11-10
 
 - Replace the plugin icon with the project logo (sprout + network) in
