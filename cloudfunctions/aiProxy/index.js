@@ -47,9 +47,10 @@
  * AI_MODEL_NOT_SUPPORTED. Override with the AI_PROXY_ALLOWED_MODELS env var
  * (comma-separated). */
 const DEFAULT_ALLOWED_MODELS = [
-  "hy3",
+  "hy4-flash",
   "hy4",
   "hy4-preview",
+  "hy3",
   "deepseek-v4.1-flash",
   "deepseek-v4.1-flash-1017",
 ];

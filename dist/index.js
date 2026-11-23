@@ -34,7 +34,7 @@
  * Version & constants (single source of truth; no imports allowed —  *
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
-export const PLUGIN_VERSION = "0.2.3";
+export const PLUGIN_VERSION = "0.2.4";
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
 const PROVIDER_ID = "cloudbase";
@@ -47,11 +47,12 @@ const USER_AGENT = `opencode-cloudbase-bridge/${PLUGIN_VERSION}`;
 const GATEWAY_SUFFIX_CN = ".api.tcloudbasegateway.com";
 const GATEWAY_SUFFIX_INTL = ".api.intl.tcloudbasegateway.com";
 const MODEL_CATALOG = {
+    "hy4-flash": { name: "Hunyuan 4 Flash", context: 1_000_000, output: 16_384, verified: true },
+    "hy4": { name: "Hunyuan 4", context: 1_000_000, output: 16_384, verified: true },
     "hy4-preview": { name: "Hunyuan 4 Preview", context: 1_000_000, output: 16_384, verified: true },
     "hy3": { name: "Hunyuan 3", context: 262_144, output: 16_384, verified: true },
     "deepseek-v4.1-flash": { name: "DeepSeek V4.1 Flash", context: 1_000_000, output: 16_384, verified: true },
-    "hy4": { name: "Hunyuan 4 (unverified)", context: 131_072, output: 16_384, verified: false },
-    "deepseek-v4.1-flash-1017": { name: "DeepSeek V4.1 Flash 1017", context: 131_072, output: 16_384, verified: true },
+    "deepseek-v4.1-flash-1017": { name: "DeepSeek V4.1 Flash 1017", context: 1_000_000, output: 16_384, verified: true },
 };
 /* ------------------------------------------------------------------ *
  * Small utilities.                                                   *

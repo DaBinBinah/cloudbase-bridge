@@ -18,3 +18,6 @@ test-tmp/
 # NOTE: dist/ is intentionally NOT ignored.
 # Magpie's "Unofficial plugins - GitHub" discovery installs the repo as-is,
 # so the built entry (dist/index.js) must be committed to the repository.
+
+# 本机部署配置（含你的环境 ID），不入库
+cloudbaserc.json

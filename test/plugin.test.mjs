@@ -119,10 +119,10 @@ test("config hook declares provider with catalog; ??= preserves user config", as
   assert.ok(provider);
   assert.equal(provider.npm, "@ai-sdk/openai-compatible");
   const models = provider.models;
-  for (const id of ["hy3", "hy4", "hy4-preview", "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"]) {
+  for (const id of ["hy4-flash", "hy3", "hy4", "hy4-preview", "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"]) {
     assert.ok(models[id], `catalog must contain ${id}`);
   }
-  assert.ok(models["hy4"].disabled, "unverified hy4 must stay disabled");
+  assert.ok(!models["hy4"].disabled, "hy4 is enabled in the 2026-11-23 refresh");
   assert.ok(!models["deepseek-v4.1-flash-1017"].disabled, "verified 1017 must be enabled by default");
   assert.ok(!models["hy3"].disabled && !models["hy4-preview"].disabled && !models["deepseek-v4.1-flash"].disabled);
   assert.equal(models["deepseek-v4.1-flash-1017"].name, "DeepSeek V4.1 Flash 1017");
@@ -133,6 +133,24 @@ test("config hook declares provider with catalog; ??= preserves user config", as
   await hooks.config(userCfg);
   assert.equal(userCfg.provider.cloudbase.name, "Mine");
   assert.ok(userCfg.provider.cloudbase.models.custom);
+});
+
+test("catalog contexts match the documented model table", async () => {
+  const { hooks } = await makePlugin();
+  const cfg = {};
+  await hooks.config(cfg);
+  const models = cfg.provider.cloudbase.models;
+  const expected = {
+    "hy4-flash": 1_000_000,
+    hy3: 262_144,
+    hy4: 1_000_000,
+    "hy4-preview": 1_000_000,
+    "deepseek-v4.1-flash": 1_000_000,
+    "deepseek-v4.1-flash-1017": 1_000_000,
+  };
+  for (const [id, context] of Object.entries(expected)) {
+    assert.equal(models[id].limit.context, context, `catalog context of ${id} must match the README table`);
+  }
 });
 
 /* ---------------- loader & auth surface ---------------- */

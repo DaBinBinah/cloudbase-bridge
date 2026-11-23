@@ -1,6 +1,7 @@
 {
   "package": "opencode-cloudbase-bridge",
   "name": "CloudBase Bridge",
+  "icon": "https://raw.githubusercontent.com/DaBinBinah/cloudbase-bridge/main/docs/images/logo.png",
   "providers": ["cloudbase"],
   "summary": {
     "en": "Tencent CloudBase (mini-program growth plan) models via your own aiProxy cloud function.",

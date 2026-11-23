@@ -30,27 +30,27 @@
  * - `dist/` must be committed so the GitHub-topic discovery path can load
  *   the plugin straight from the repository.
  */
-export declare const PLUGIN_VERSION: "0.2.3";
+export declare const PLUGIN_VERSION: "0.2.4";
 /**
- * Model catalog.
+ * Model catalog (text chat models).
  *
- * Sources (checked 2026-11-09):
- * - https://docs.cloudbase.net/ai/ai-inspire-plan-new-models — official
- *   growth-plan notice: `hy4-preview` (1M ctx), `hy3` (256K ctx) and
- *   `deepseek-v4.1-flash` (1M ctx) are the three text models that can spend
- *   the gift quota. They need no console opt-in.
- * - `deepseek-v4.1-flash-1017` is NOT in the official notice, but I verified
- *   it works through aiProxy in my own CloudBase environment (2026-11). It
- *   is enabled by default; support may differ per environment — CloudBase
- *   answers `AI_MODEL_NOT_SUPPORTED` where it is not available, and the
- *   per-account model list follows the deployed function's allowlist (see
- *   the `provider.models` hook).
- * - `hy4` remains an unverified placeholder; it stays disabled until
- *   verified the same way.
+ * Sources:
+ * - https://docs.cloudbase.net/ai/ai-inspire-plan-new-models (checked
+ *   2026-11-09): `hy4-preview` (1M ctx), `hy3` (256K ctx) and
+ *   `deepseek-v4.1-flash` (1M ctx) are the growth-plan gift-quota text
+ *   models; no console opt-in needed.
+ * - 2026-11-23 model refresh: my environment now also offers `hy4` and
+ *   `hy4-flash` (both enabled here), alongside `deepseek-v4.1-flash-1017`
+ *   which I verified through aiProxy earlier (2026-11). Availability may
+ *   differ per environment — CloudBase answers `AI_MODEL_NOT_SUPPORTED`
+ *   where a model is not available, and the per-account model list follows
+ *   the deployed function's allowlist (see the `provider.models` hook).
+ *   Official docs do not list `hy4-flash` yet; its 1M context follows the
+ *   hy4 family — adjust if your console says otherwise.
+ * - `hy-image-v3.5-preview` is an image-generation model and is NOT in this
+ *   catalog: this bridge only does text chat (generateText).
  *
- * `verified` here means "enabled by default", not "officially documented" —
- * see the per-model notes above. Context/output numbers for entries without
- * official specs are conservative placeholders.
+ * `verified` means "enabled by default", not "officially documented".
  */
 interface ModelSpec {
     name: string;
@@ -217,7 +217,7 @@ export declare const CloudbaseBridge: (input?: PluginInput, options?: PluginOpti
     };
 }>;
 export declare const _internal: {
-    PLUGIN_VERSION: "0.2.3";
+    PLUGIN_VERSION: "0.2.4";
     PROVIDER_ID: string;
     DEFAULT_FUNCTION_NAME: string;
     DEFAULT_TIMEOUT_MS: number;

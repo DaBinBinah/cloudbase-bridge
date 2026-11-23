@@ -67,7 +67,7 @@ function startMockGateway() {
             service: "aiProxy",
             version: "1.0.0",
             env: "env-mock",
-            models: ["hy3", "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"],
+            models: ["hy4-flash", "hy3", "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"],
           }),
         );
         return;
@@ -148,7 +148,7 @@ await okAsync("provider.models refines the account model list via ping", async (
   const cfg = {};
   await hooksLive.config(cfg);
   const refined = await hooksLive.provider.models({ models: cfg.provider.cloudbase.models }, { auth });
-  assert.deepEqual(Object.keys(refined).sort(), ["deepseek-v4.1-flash", "deepseek-v4.1-flash-1017", "hy3"]);
+  assert.deepEqual(Object.keys(refined).sort(), ["deepseek-v4.1-flash", "deepseek-v4.1-flash-1017", "hy3", "hy4-flash"]);
   assert.equal(refined["deepseek-v4.1-flash-1017"].disabled, undefined, "ping-allowed model must not stay disabled");
 });
 

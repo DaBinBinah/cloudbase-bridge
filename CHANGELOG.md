@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [SemVer](https://semver.org/).
 
+## [0.2.4] - 2026-11-23
+
+- Model refresh (2026-11-23, from my environment's current list): add
+  `hy4-flash` and enable `hy4` — the catalog is now six text models
+  (`hy4-flash`, `hy4`, `hy4-preview`, `hy3`, `deepseek-v4.1-flash`,
+  `deepseek-v4.1-flash-1017`), all enabled by default. aiProxy's default
+  allowlist matches. `hy-image-v3.5-preview` (image generation) is out of
+  scope for this text-chat bridge.
+- Overall review pass: the model catalog now matches the README table —
+  `hy4` and `deepseek-v4.1-flash-1017` context documented as 1M in code
+  too (was a conservative 128K placeholder); a unit test locks the
+  catalog to the documented table.
+- Project logo added to the top of both READMEs and to
+  `examples/registry-entry.json` (`icon` field) for the community
+  registry listing; local `cloudbaserc.json` is now gitignored.
+
 ## [0.2.3] - 2026-11-12
 
 - Replace the shields.io image badge with a plain text link to the
