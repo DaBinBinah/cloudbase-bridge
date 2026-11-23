@@ -131,11 +131,13 @@ deployed function is not the one from this repository, or an older version.
 `tcb fn invoke aiProxy --params '{"action":"ping"}'` — the reply must be
 `{"ok":true,"service":"aiProxy",...}`.
 
-## 8. `TCB_ENV_MISSING` (HTTP 502)
+## 8. `CONFIG_ERROR` / `TCB_ENV_MISSING` (HTTP 502)
 
 **Meaning.** The function ran without `TCB_ENV`. Inside CloudBase the runtime
 injects it automatically; outside (e.g. a mis-configured web function or
-local `tcb fn run` quirk) it's absent.
+local `tcb fn run` quirk) it's absent. aiProxy ≥ 1.2.x reports this as
+`CONFIG_ERROR`; older deployments still return `TCB_ENV_MISSING`. The plugin
+maps both codes to HTTP 502.
 
 **Fix.** Deploy as a normal **Event Function** in CloudBase, or add
 `TCB_ENV` to the function's environment variables manually.

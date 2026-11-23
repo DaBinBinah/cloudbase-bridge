@@ -13,7 +13,7 @@ cp cloudbaserc.example.json cloudbaserc.json     # then set "envId"
 tcb login
 tcb fn deploy aiProxy --force                    # Event Function — no --httpFn
 tcb fn invoke aiProxy --params '{"action":"ping"}'
-# expect: {"ok":true,"service":"aiProxy","version":"1.0.0","env":"<your-env>","models":[...]}
+# expect: {"ok":true,"service":"aiProxy","version":"1.2.2","env":"<your-env>","models":[...]}
 ```
 
 ## Checklist

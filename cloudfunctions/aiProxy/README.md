@@ -27,19 +27,22 @@ automatically.
 // event (the plugin builds this from the Chat Completions request)
 {
   "action": "chat",            // or "ping" (returns ok/env/model list)
-  "model": "hy3",
+  "model": "hy3",              // optional; defaults to "deepseek-v4.1-flash"
+                               // "cloudbase/hy3" / "cloudbase-plugin/hy3" are accepted too
   "messages": [
     { "role": "system", "content": "You are a helpful assistant." },
     { "role": "user", "content": "Hello" }
   ],
   "temperature": 0.7,          // optional, 0..2
-  "topP": 0.9                  // optional, (0, 1]
+  "topP": 0.9                  // optional, 0..1 (0 = greedy, inclusive)
 }
 ```
 
-Text-only: image parts and tool-call messages are rejected with a diagnostic
-error (`IMAGE_INPUT_NOT_SUPPORTED` / `INVALID_REQUEST`) because the
-documented `generateText` input carries plain string content.
+`messages` must be a non-empty array; each entry needs a non-blank string
+`role` and a `content` that is a string or an array. There is **no cap on the
+number of messages or on the payload size** — long agent histories are sent
+through as-is. Text-only: the documented `generateText` input carries plain
+string content, so image parts are not interpreted.
 
 ## What it returns
 
@@ -57,10 +60,15 @@ function-invocation API has no wrapper envelope):
 }
 ```
 
-Failure — `{ "error": { "code": "…", "message": "…", "requestId": "…" } }`
-with codes such as `INVALID_REQUEST`, `MODEL_NOT_ALLOWED`,
+Failure — `{ "error": { "code": "…", "message": "…", "type": "cloudbase_function_error" } }`
+with codes such as `INVALID_REQUEST`, `MODEL_NOT_ALLOWED`, `CONFIG_ERROR`,
 `AI_CHANNEL_NOT_ALLOWED`, `AI_MODEL_NOT_SUPPORTED`,
-`EXCEED_TOKEN_QUOTA_LIMIT`, `TCB_ENV_MISSING`, `UPSTREAM_ERROR`.
+`EXCEED_TOKEN_QUOTA_LIMIT`, `UPSTREAM_ERROR`.
+
+Only `INVALID_REQUEST`, `MODEL_NOT_ALLOWED` and `CONFIG_ERROR` keep their
+original message; every other code replaces the upstream text with
+`AI 模型调用失败，请稍后重试` so internal details (endpoints, account ids,
+quota internals) never reach the client.
 
 ## Deploy — Option A: console (控制台上传)
 
@@ -115,5 +123,11 @@ tcb fn invoke aiProxy --params '{"action":"ping"}'
   normally pass the default rule; if you see `EXCEED_AUTHORITY`, review the
   function security rules in the console
   (see `docs/troubleshooting.md`).
-- Size limits: ≤128 messages, ≤200 000 chars per message, ≤400 000 chars
-  total — keep agents from burning quota with runaway histories.
+- No size limits: the function no longer caps message count or payload
+  bytes, so it is the caller's job to avoid runaway histories. The CloudBase
+  platform limits (function timeout 120 s, event size) still apply.
+- Error hygiene: only `INVALID_REQUEST`, `MODEL_NOT_ALLOWED` and
+  `CONFIG_ERROR` keep their original text. Every other failure — including
+  known CloudBase codes such as `AI_CHANNEL_NOT_ALLOWED` or
+  `EXCEED_TOKEN_QUOTA_LIMIT` — keeps its `code` but replaces the message
+  with `AI 模型调用失败，请稍后重试`.

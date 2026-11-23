@@ -65,7 +65,7 @@ function startMockGateway() {
           JSON.stringify({
             ok: true,
             service: "aiProxy",
-            version: "1.0.0",
+            version: "1.2.2",
             env: "env-mock",
             models: ["hy4-flash", "hy3", "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"],
           }),
@@ -120,7 +120,9 @@ ok("config hook declares the cloudbase provider with the model catalog", async (
   for (const id of ["hy3", "hy4-preview", "deepseek-v4.1-flash", "hy4", "deepseek-v4.1-flash-1017"]) {
     assert.ok(provider.models[id], `model ${id} missing`);
   }
-  assert.equal(provider.models.hy4.disabled, true);
+  // Every catalog model is verified as of 0.2.4, so none is flagged disabled.
+  assert.equal(provider.models.hy4.disabled, undefined);
+  assert.equal(provider.models["hy4-flash"].disabled, undefined);
 });
 
 ok("auth hook shape: provider id, api method, prompts", () => {

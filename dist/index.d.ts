@@ -30,7 +30,7 @@
  * - `dist/` must be committed so the GitHub-topic discovery path can load
  *   the plugin straight from the repository.
  */
-export declare const PLUGIN_VERSION: "0.2.4";
+export declare const PLUGIN_VERSION: "0.2.5";
 /**
  * Model catalog (text chat models).
  *
@@ -217,7 +217,7 @@ export declare const CloudbaseBridge: (input?: PluginInput, options?: PluginOpti
     };
 }>;
 export declare const _internal: {
-    PLUGIN_VERSION: "0.2.4";
+    PLUGIN_VERSION: "0.2.5";
     PROVIDER_ID: string;
     DEFAULT_FUNCTION_NAME: string;
     DEFAULT_TIMEOUT_MS: number;

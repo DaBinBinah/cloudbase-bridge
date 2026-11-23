@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [SemVer](https://semver.org/).
 
+## [0.2.5] - 2026-11-24
+
+- aiProxy request/validation hardening (function `AI_PROXY_VERSION` 1.2.2,
+  `cloudfunctions/aiProxy/package.json` 1.2.2):
+  - `model` is optional and defaults to `deepseek-v4.1-flash`; the
+    `cloudbase/` and `cloudbase-plugin/` prefixes are stripped before the
+    allowlist check, so agent-side model ids resolve identically.
+  - `topP` now accepts `0` (greedy decoding) — the documented range is
+    `[0, 1]`, previously `0` was rejected as out of range.
+  - Message count and payload size are no longer capped: the previous
+    100-message / 1 MB limits are gone, so long agent histories and large
+    CJK conversations reach the model intact. `messages` must still be a
+    non-empty array of `{ role, content }` objects.
+  - Error envelope hygiene: unknown upstream failures collapse to
+    `UPSTREAM_ERROR` with a generic message; recognized CloudBase codes
+    (`AI_CHANNEL_NOT_ALLOWED`, `EXCEED_TOKEN_QUOTA_LIMIT`, …) keep their
+    code but drop the upstream text; `INVALID_REQUEST`, `MODEL_NOT_ALLOWED`
+    and `CONFIG_ERROR` keep their actionable text.
+  - Missing `TCB_ENV` now reports `CONFIG_ERROR` (was `TCB_ENV_MISSING`).
+    The plugin maps `CONFIG_ERROR` to HTTP 502 with
+    `x-magpie-sign-in: kept`, and still maps `TCB_ENV_MISSING` for
+    functions deployed from earlier revisions.
+  - `tcb.init` now sets the 120 s SDK timeout the deployment guide requires.
+- Tests: default-model fallback, prefix stripping, `topP: 0`, absence of any
+  message-count/size cap, upstream error masking, `CONFIG_ERROR` mapping and
+  the ping `version` field.
+
 ## [0.2.4] - 2026-11-23
 
 - Model refresh (2026-11-23, from my environment's current list): add

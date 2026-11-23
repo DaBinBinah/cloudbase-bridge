@@ -319,6 +319,7 @@ test("aiProxy error envelopes map by code", async () => {
     [{ code: "AI_MODEL_NOT_SUPPORTED", message: "nope" }, 404],
     [{ code: "AI_CHANNEL_NOT_ALLOWED", message: "nope" }, 403],
     [{ code: "EXCEED_TOKEN_QUOTA_LIMIT", message: "nope" }, 429],
+    [{ code: "CONFIG_ERROR", message: "no TCB_ENV" }, 502],
     [{ code: "TCB_ENV_MISSING", message: "no TCB_ENV" }, 502],
     [{ code: "UPSTREAM_ERROR", message: "boom" }, 502],
   ];

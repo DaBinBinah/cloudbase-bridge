@@ -34,7 +34,7 @@
  * Version & constants (single source of truth; no imports allowed —  *
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
-export const PLUGIN_VERSION = "0.2.4";
+export const PLUGIN_VERSION = "0.2.5";
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
 const PROVIDER_ID = "cloudbase";
@@ -257,7 +257,10 @@ function mapFunctionError(err, requestId) {
             return errorResponse(403, message, { code, requestId: innerRequestId });
         case "EXCEED_TOKEN_QUOTA_LIMIT":
             return errorResponse(429, message, { code, requestId: innerRequestId });
+        case "CONFIG_ERROR":
         case "TCB_ENV_MISSING":
+            // CONFIG_ERROR is the current aiProxy code for a missing TCB_ENV;
+            // TCB_ENV_MISSING is kept for functions deployed before v1.2.x.
             return errorResponse(502, message, { code, requestId: innerRequestId, headers: { "x-magpie-sign-in": "kept" } });
         case "UPSTREAM_ERROR":
         case "FUNCTIONS_TIME_LIMIT_EXCEEDED":
