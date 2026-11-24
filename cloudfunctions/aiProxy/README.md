@@ -140,5 +140,6 @@ tcb fn invoke aiProxy --params '{"action":"ping"}'
   normally pass the default rule; if you see `EXCEED_AUTHORITY`, review the
   function security rules in the console
   (see `docs/troubleshooting.md`).
-- Size limits: ≤128 messages, ≤200 000 chars per message, ≤400 000 chars
-  total — keep agents from burning quota with runaway histories.
+- Size limits: ≤10 000 messages and ≤6 MiB of message text (6 291 456
+  chars), matching the 6 MB synchronous event CloudBase accepts. aiProxy
+  1.2.0 and older stop at 128 messages / 400 000 chars.

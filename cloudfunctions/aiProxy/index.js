@@ -62,14 +62,16 @@ const DEFAULT_ALLOWED_MODELS = [
   "deepseek-v4.1-flash-1017",
 ];
 
-const MAX_MESSAGES = 128;
-const MAX_SINGLE_MESSAGE_CHARS = 200_000;
-const MAX_TOTAL_MESSAGE_CHARS = 400_000;
+// The platform caps a synchronous event at 6 MB, so these sit at that
+// ceiling: a 1M-token agent history has to fit.
+const MAX_MESSAGES = 10_000;
+const MAX_SINGLE_MESSAGE_CHARS = 6 * 1024 * 1024;
+const MAX_TOTAL_MESSAGE_CHARS = 6 * 1024 * 1024;
 const MAX_MODEL_ID_LENGTH = 64;
 const MAX_TOOLS = 128;
 const MAX_TOOL_CALLS_PER_MESSAGE = 64;
 const MAX_TOOL_NAME_LENGTH = 128;
-const AI_PROXY_VERSION = "1.2.0";
+const AI_PROXY_VERSION = "1.2.1";
 
 /** Group name for the managed model pool — required by the official
  * growth-plan notice ("createModel 的参数改为 cloudbase"). The concrete

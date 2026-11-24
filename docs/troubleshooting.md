@@ -145,7 +145,19 @@ local `tcb fn run` quirk) it's absent.
 **Fix.** Deploy as a normal **Event Function** in CloudBase, or add
 `TCB_ENV` to the function's environment variables manually.
 
-## 9. Other gateway errors
+## 9. Request too large (HTTP 413 `PAYLOAD_TOO_LARGE`, or `INVALID_REQUEST` "Conversation too large" / "Too many messages")
+
+**Meaning.** The conversation is over a size limit. Plugin 0.2.7 with
+aiProxy 1.2.1 take up to 6 MiB per request (the CloudBase synchronous event
+size) and 10 000 messages. Plugin 0.2.6 and older stop at 512 KiB; aiProxy
+1.2.0 and older stop at 128 messages / 400 000 chars.
+
+**Fix.** Update the plugin and redeploy `cloudfunctions/aiProxy/`. A session
+that is already over the limit cannot compact itself (the compaction request
+carries the same history): start a new session or fork from an earlier
+message.
+
+## 10. Other gateway errors
 
 | Code | Status | What to do |
 | --- | --- | --- |

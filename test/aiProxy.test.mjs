@@ -203,6 +203,28 @@ test("validateChatEvent rejects out-of-range sampling params and oversized input
   assert.match(tooBig.error.message, /too large/);
 });
 
+test("validateChatEvent takes a long agent history and still bounds it", () => {
+  const turn = (i) => ({ role: i % 2 === 0 ? "user" : "assistant", content: "x".repeat(2_000) });
+  const long = _internal.validateChatEvent({ model: "hy3", messages: Array.from({ length: 1_001 }, (_, i) => turn(i)) });
+  assert(!long.error, "1001 messages / 2 MB of text is accepted");
+  assert.equal(long.params.messages.length, 1_001);
+
+  const tooMany = _internal.validateChatEvent({
+    model: "hy3",
+    messages: Array.from({ length: _internal.MAX_MESSAGES + 1 }, () => ({ role: "user", content: "x" })),
+  });
+  assert.equal(tooMany.error.code, "INVALID_REQUEST");
+  assert.match(tooMany.error.message, /Too many messages/);
+
+  const half = "x".repeat(_internal.MAX_TOTAL_MESSAGE_CHARS / 2);
+  const tooLarge = _internal.validateChatEvent({
+    model: "hy3",
+    messages: [{ role: "user", content: half }, { role: "assistant", content: half }, { role: "user", content: "x" }],
+  });
+  assert.equal(tooLarge.error.code, "INVALID_REQUEST");
+  assert.match(tooLarge.error.message, /Conversation too large/);
+});
+
 test("validateChatEvent keeps reasoning_content on every assistant message that carries it", () => {
   const toolCall = { id: "call_1", type: "function", function: { name: "read_file", arguments: "{}" } };
   const result = _internal.validateChatEvent({
