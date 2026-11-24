@@ -55,8 +55,16 @@ sends it, and is forwarded back to the model on every assistant message
 that carries it (such models reject a tool-enabled request whose earlier
 turns lack their reasoning).
 
-Image parts are rejected with `IMAGE_INPUT_NOT_SUPPORTED` because the
-`generateText` input carries plain string content.
+Image input: a `user` message may carry OpenAI `image_url` parts next to
+its text parts. The url is an `http(s)` link the model service can reach,
+or a `data:image/...;base64,…` URL; `detail` (`low` / `high` / `auto`) is
+kept. The parts are passed to `generateText` in the array form the
+[CloudBase multimodal API](https://docs.cloudbase.net/ai/model/multimodal)
+takes, and an inline image counts toward the 6 MiB of message text.
+`IMAGE_INPUT_NOT_SUPPORTED` is returned for an image on a non-user message
+and for an image sent to `hy3`, which the
+[official model list](https://docs.cloudbase.net/ai/available-models) marks
+as text-only. Other part types (video, file) get `INVALID_REQUEST`.
 
 ## What it returns
 

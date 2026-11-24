@@ -34,7 +34,7 @@
  * Version & constants (single source of truth; no imports allowed —  *
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
-export const PLUGIN_VERSION = "0.2.7";
+export const PLUGIN_VERSION = "0.2.8";
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
 const PROVIDER_ID = "cloudbase";
@@ -48,13 +48,69 @@ const USER_AGENT = `opencode-cloudbase-bridge/${PLUGIN_VERSION}`;
 const GATEWAY_SUFFIX_CN = ".api.tcloudbasegateway.com";
 const GATEWAY_SUFFIX_INTL = ".api.intl.tcloudbasegateway.com";
 const MODEL_CATALOG = {
-    "hy4-flash": { name: "Hunyuan 4 Flash", context: 1_000_000, output: 16_384, verified: true },
-    "hy4": { name: "Hunyuan 4", context: 1_000_000, output: 16_384, verified: true },
-    "hy4-preview": { name: "Hunyuan 4 Preview", context: 1_000_000, output: 16_384, verified: true },
-    "hy3": { name: "Hunyuan 3", context: 262_144, output: 16_384, verified: true },
-    "deepseek-v4.1-flash": { name: "DeepSeek V4.1 Flash", context: 1_000_000, output: 16_384, verified: true },
-    "deepseek-v4.1-flash-1017": { name: "DeepSeek V4.1 Flash 1017", context: 1_000_000, output: 16_384, verified: true },
+    "hy4-flash": { name: "Hunyuan 4 Flash", context: 1_000_000, output: 16_384, verified: true, image: true },
+    "hy4": { name: "Hunyuan 4", context: 1_000_000, output: 16_384, verified: true, image: true },
+    "hy4-preview": { name: "Hunyuan 4 Preview", context: 1_000_000, output: 16_384, verified: true, image: true },
+    "hy3": { name: "Hunyuan 3", context: 262_144, output: 16_384, verified: true, image: false },
+    "deepseek-v4.1-flash": { name: "DeepSeek V4.1 Flash", context: 1_000_000, output: 16_384, verified: true, image: true },
+    "deepseek-v4.1-flash-1017": { name: "DeepSeek V4.1 Flash 1017", context: 1_000_000, output: 16_384, verified: true, image: true },
 };
+/** Host-facing model entry. `modalities` tells the gateway and its agents
+ * which models can be sent images. */
+function modelEntry(spec) {
+    return {
+        name: spec.name,
+        limit: { context: spec.context, output: spec.output },
+        tool_call: true,
+        modalities: { input: spec.image ? ["text", "image"] : ["text"], output: ["text"] },
+    };
+}
+/** The same structure with every number set to 0. */
+function zeroNumbers(value) {
+    if (typeof value === "number")
+        return 0;
+    if (!isPlainObject(value))
+        return value;
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, zeroNumbers(item)]));
+}
+/**
+ * Entry for a model the function's allowlist returned but the host's list
+ * (`provider.models`) lacks. Per the Magpie plugin docs that list is in the
+ * host's model shape (`capabilities.input.image`), not the config-hook shape
+ * (`modalities`), so the entry takes its structure from a sibling already in
+ * the list. The sibling's own settings (prices, options, headers, variants)
+ * are not carried over.
+ */
+function accountModelEntry(id, base) {
+    const spec = MODEL_CATALOG[id];
+    const name = spec ? spec.name : id;
+    const limit = { context: spec ? spec.context : 131_072, output: spec ? spec.output : 16_384 };
+    const template = Object.values(base).find((model) => isPlainObject(model) && isPlainObject(model.capabilities));
+    if (!template) {
+        return spec ? modelEntry(spec) : { name, limit, tool_call: true };
+    }
+    const capabilities = template.capabilities;
+    const entry = {
+        ...template,
+        id,
+        name,
+        limit,
+        capabilities: {
+            ...capabilities,
+            toolcall: true,
+            input: { ...(isPlainObject(capabilities.input) ? capabilities.input : {}), text: true, image: spec ? spec.image : true },
+        },
+    };
+    if (isPlainObject(template.api))
+        entry.api = { ...template.api, id };
+    if (isPlainObject(template.cost))
+        entry.cost = zeroNumbers(template.cost);
+    for (const key of ["options", "headers", "variants"]) {
+        if (isPlainObject(template[key]))
+            entry[key] = {};
+    }
+    return entry;
+}
 /* ------------------------------------------------------------------ *
  * Small utilities.                                                   *
  * ------------------------------------------------------------------ */
@@ -653,12 +709,7 @@ export const CloudbaseBridge = async (input = {}, options = {}) => {
                 api: `https://placeholder${GATEWAY_SUFFIX_CN}/v1`,
                 models: Object.fromEntries(Object.entries(MODEL_CATALOG).map(([id, spec]) => [
                     id,
-                    {
-                        name: spec.name,
-                        limit: { context: spec.context, output: spec.output },
-                        tool_call: true,
-                        ...(spec.verified ? {} : { disabled: true }),
-                    },
+                    { ...modelEntry(spec), ...(spec.verified ? {} : { disabled: true }) },
                 ])),
             };
         },
@@ -740,14 +791,7 @@ export const CloudbaseBridge = async (input = {}, options = {}) => {
                         return base;
                     const out = {};
                     for (const id of pingModels) {
-                        const known = MODEL_CATALOG[id];
-                        const entry = base[id]
-                            ? { ...base[id] }
-                            : {
-                                name: known?.name ?? id,
-                                limit: { context: known?.context ?? 131_072, output: known?.output ?? 16_384 },
-                                tool_call: true,
-                            };
+                        const entry = base[id] ? { ...base[id] } : accountModelEntry(id, base);
                         // The deployed function's allowlist explicitly accepts this id
                         // (it just said so in the ping), so a static placeholder
                         // `disabled` flag from the config-hook catalog must not survive.

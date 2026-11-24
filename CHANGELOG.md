@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [SemVer](https://semver.org/).
 
+## [0.2.8] - 2026-11-24
+
+- Image input: aiProxy 1.3.0 forwards OpenAI `image_url` parts on user
+  messages (an `http(s)` link or a `data:image/...;base64` URL) to the
+  model instead of answering `IMAGE_INPUT_NOT_SUPPORTED` (HTTP 400). The
+  official model list marks `hy4`, `hy4-flash`, `deepseek-v4.1-flash` and
+  `deepseek-v4.1-flash-1017` as image-capable. `hy3` takes text only and
+  still gets `IMAGE_INPUT_NOT_SUPPORTED`, now with a message that names
+  the image-capable models. **Redeploy the function**
+  (`tcb fn deploy aiProxy --force`); plugins 0.2.4 to 0.2.7 already pass
+  the parts through, so the function update alone enables images.
+  Checked on a live environment with `hy4`, `hy4-flash`,
+  `deepseek-v4.1-flash` and `deepseek-v4.1-flash-1017` (data URLs up to
+  5.2 MB, `https` links, images kept in history, images with tool calls);
+  `hy4-preview` could not be checked.
+- The model catalog declares `modalities` per model, so the host stops
+  offering image input for `hy3`.
+
 ## [0.2.7] - 2026-11-24
 
 - Request size: the plugin forwards requests of up to 6 MiB (was 512 KiB)

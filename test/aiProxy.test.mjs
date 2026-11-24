@@ -142,20 +142,84 @@ test("buildGenerateInput forwards max_tokens and tools in a single model step", 
   assert.deepEqual(withTools.maxSteps, 1, "the SDK must not execute the agent's tools itself");
 });
 
-test("validateChatEvent rejects image parts with IMAGE_INPUT_NOT_SUPPORTED", () => {
+const PNG_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+test("validateChatEvent keeps image_url parts on user messages for image-capable models", () => {
   const result = _internal.validateChatEvent({
     model: "deepseek-v4.1-flash",
     messages: [
+      { role: "system", content: [{ type: "text", text: "sys" }] },
       {
         role: "user",
         content: [
           { type: "text", text: "what is this?" },
-          { type: "image_url", image_url: { url: "https://example.com/cat.png" } },
+          { type: "image_url", image_url: { url: "https://example.com/cat.png", detail: "low", extra: "dropped" } },
+          { type: "image_url", image_url: { url: PNG_DATA_URL } },
         ],
       },
+      { role: "assistant", content: "a cat" },
+      { role: "user", content: "and its colour?" },
     ],
   });
+  assert(!result.error);
+  assert.deepEqual(result.params.messages, [
+    { role: "system", content: "sys" },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "what is this?" },
+        { type: "image_url", image_url: { url: "https://example.com/cat.png", detail: "low" } },
+        { type: "image_url", image_url: { url: PNG_DATA_URL } },
+      ],
+    },
+    { role: "assistant", content: "a cat" },
+    { role: "user", content: "and its colour?" },
+  ]);
+  assert.deepEqual(_internal.buildGenerateInput(result.params).messages, result.params.messages);
+});
+
+test("validateChatEvent answers IMAGE_INPUT_NOT_SUPPORTED for an image sent to a text-only model", () => {
+  const messages = [
+    { role: "user", content: "hi" },
+    { role: "user", content: [{ type: "text", text: "what is this?" }, { type: "image_url", image_url: { url: PNG_DATA_URL } }] },
+  ];
+  const result = _internal.validateChatEvent({ model: "hy3", messages });
   assert.deepEqual(result.error.code, "IMAGE_INPUT_NOT_SUPPORTED");
+  assert.match(result.error.message, /messages\[1\]\.content\[1\].*"hy3" takes text only.*hy4/);
+  assert.equal(result.error.message.includes("base64"), false, "the image itself must not be echoed");
+});
+
+test("validateChatEvent rejects images outside user messages, bad image urls and other part types", () => {
+  const image = { type: "image_url", image_url: { url: PNG_DATA_URL } };
+  const onTool = _internal.validateChatEvent({
+    model: "hy4",
+    messages: [{ role: "tool", tool_call_id: "c1", content: [image] }],
+  });
+  assert.deepEqual(onTool.error.code, "IMAGE_INPUT_NOT_SUPPORTED");
+  assert.match(onTool.error.message, /user messages only/);
+
+  for (const url of [undefined, "", "file:///etc/passwd", "data:text/html;base64,PGI+", "data:image/png;base64,<svg>", "ftp://example.com/a.png"]) {
+    const bad = _internal.validateChatEvent({
+      model: "hy4",
+      messages: [{ role: "user", content: [{ type: "image_url", image_url: { url } }] }],
+    });
+    assert.deepEqual(bad.error.code, "INVALID_REQUEST", `url ${url}`);
+  }
+
+  for (const part of [{ type: "video_url", video_url: { url: "https://example.com/a.mp4" } }, { type: "file", file: { file_url: "https://example.com/a.pdf" } }, "text"]) {
+    const other = _internal.validateChatEvent({ model: "hy4", messages: [{ role: "user", content: [part] }] });
+    assert.deepEqual(other.error.code, "INVALID_REQUEST");
+  }
+});
+
+test("an inline image counts toward the conversation size limit", () => {
+  const big = "data:image/png;base64," + "A".repeat(_internal.MAX_TOTAL_MESSAGE_CHARS);
+  const result = _internal.validateChatEvent({
+    model: "hy4",
+    messages: [{ role: "user", content: [{ type: "text", text: "look" }, { type: "image_url", image_url: { url: big } }] }],
+  });
+  assert.deepEqual(result.error.code, "INVALID_REQUEST");
+  assert.match(result.error.message, /too large/);
 });
 
 test("validateChatEvent flattens text array parts", () => {
