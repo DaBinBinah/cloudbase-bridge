@@ -203,7 +203,7 @@ test("validateChatEvent rejects out-of-range sampling params and oversized input
   assert.match(tooBig.error.message, /too large/);
 });
 
-test("validateChatEvent keeps reasoning_content only on assistant tool-call messages", () => {
+test("validateChatEvent keeps reasoning_content on every assistant message that carries it", () => {
   const toolCall = { id: "call_1", type: "function", function: { name: "read_file", arguments: "{}" } };
   const result = _internal.validateChatEvent({
     model: "hy4",
@@ -212,7 +212,8 @@ test("validateChatEvent keeps reasoning_content only on assistant tool-call mess
       { role: "assistant", content: "", reasoning_content: "I should read the file.", tool_calls: [toolCall] },
       { role: "tool", tool_call_id: "call_1", content: "42" },
       { role: "assistant", content: "It says 42.", reasoning_content: "The tool returned 42." },
-      { role: "user", content: "thanks" },
+      { role: "user", content: "thanks", reasoning_content: "not an assistant message" },
+      { role: "assistant", content: "Welcome.", reasoning_content: "" },
     ],
   });
   assert(!result.error);
@@ -222,7 +223,9 @@ test("validateChatEvent keeps reasoning_content only on assistant tool-call mess
     tool_calls: [toolCall],
     reasoning_content: "I should read the file.",
   });
-  assert.deepEqual(result.params.messages[3], { role: "assistant", content: "It says 42." });
+  assert.deepEqual(result.params.messages[3], { role: "assistant", content: "It says 42.", reasoning_content: "The tool returned 42." });
+  assert.deepEqual(result.params.messages[4], { role: "user", content: "thanks" });
+  assert.deepEqual(result.params.messages[5], { role: "assistant", content: "Welcome." });
 
   const tooBig = _internal.validateChatEvent({
     model: "hy4",

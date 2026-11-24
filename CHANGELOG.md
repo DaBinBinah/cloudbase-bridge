@@ -8,8 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 - Thinking-mode tool turns: `reasoning_content` is now returned by aiProxy
   and the plugin (JSON and synthesized SSE), and aiProxy forwards it back
-  to the model on assistant messages that carry `tool_calls`. It was
-  dropped in both directions before.
+  to the model on assistant messages. It was dropped in both directions
+  before.
 - A reply that ends at the token limit while carrying tool calls now keeps
   `finish_reason: "length"` instead of being reported as `"tool_calls"`.
 - aiProxy 1.2.0, from #1 by @ryanuo: `topP: 0` is accepted (the range is

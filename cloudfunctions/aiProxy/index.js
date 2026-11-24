@@ -212,9 +212,8 @@ function normalizeToolCalls(toolCalls, index) {
 
 /**
  * Normalize one OpenAI-style message to the generateText input shape:
- * { role, content: string } plus `tool_calls` (and the `reasoning_content`
- * that came with them) on assistant messages and `tool_call_id` on tool
- * messages. Images and unknown roles are rejected
+ * { role, content: string } plus `tool_calls` and `reasoning_content` on
+ * assistant messages and `tool_call_id` on tool messages. Images and unknown roles are rejected
  * with a diagnostic error code. Returns { message, chars } or { error }.
  */
 function normalizeMessage(message, index) {
@@ -240,11 +239,12 @@ function normalizeMessage(message, index) {
     if (calls.error) return { error: calls.error };
     normalized.tool_calls = calls.toolCalls;
     chars += calls.chars;
-    // Thinking-mode models need their own reasoning back on tool turns.
-    if (typeof message.reasoning_content === "string" && message.reasoning_content.length > 0) {
-      normalized.reasoning_content = message.reasoning_content;
-      chars += message.reasoning_content.length;
-    }
+  }
+  // Thinking-mode models reject a tool-enabled request whose earlier
+  // assistant turns come back without their reasoning.
+  if (role === "assistant" && typeof message.reasoning_content === "string" && message.reasoning_content.length > 0) {
+    normalized.reasoning_content = message.reasoning_content;
+    chars += message.reasoning_content.length;
   }
   if (role === "tool") {
     if (typeof message.tool_call_id !== "string" || message.tool_call_id.length === 0) {

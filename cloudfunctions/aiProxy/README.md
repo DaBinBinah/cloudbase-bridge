@@ -51,8 +51,9 @@ the caller. A reply cut off at the token limit keeps `finish_reason:
 incomplete.
 
 Thinking-mode models: `message.reasoning_content` is returned when the model
-sends it, and is forwarded back to the model on assistant messages that
-carry `tool_calls`.
+sends it, and is forwarded back to the model on every assistant message
+that carries it (such models reject a tool-enabled request whose earlier
+turns lack their reasoning).
 
 Image parts are rejected with `IMAGE_INPUT_NOT_SUPPORTED` because the
 `generateText` input carries plain string content.
