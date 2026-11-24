@@ -279,6 +279,60 @@ test("bridge streaming: tool calls are emitted as indexed tool_calls deltas", as
   }
 });
 
+test("bridge returns reasoning_content and keeps finish_reason length for truncated tool calls", async () => {
+  const { hooks } = await makePlugin();
+  const completion = aiProxyToolCallCompletion();
+  completion.choices[0].message.reasoning_content = "I need to write the file.";
+  completion.choices[0].finish_reason = "length";
+  const gw = mockGateway(async () => new Response(JSON.stringify(completion), { status: 200 }));
+  try {
+    const doFetch = await loaderFetch(hooks);
+    const history = [
+      { role: "user", content: "write out.txt" },
+      { role: "assistant", content: null, reasoning_content: "I need to write the file.", tool_calls: [WRITE_FILE_CALL] },
+      { role: "tool", tool_call_id: "call_w1", content: "ok" },
+    ];
+    const res = await doFetch(chatBody({ messages: history, tools: [WRITE_FILE_TOOL] }));
+    assert.deepEqual(JSON.parse(gw.calls[0].init.body).messages, history, "reasoning_content goes back to aiProxy");
+    const payload = await res.json();
+    assert.deepEqual(payload.choices[0].message, {
+      role: "assistant",
+      content: null,
+      tool_calls: [WRITE_FILE_CALL],
+      reasoning_content: "I need to write the file.",
+    });
+    assert.equal(payload.choices[0].finish_reason, "length");
+
+    const streamed = await doFetch(chatBody({ stream: true, tools: [WRITE_FILE_TOOL] }));
+    const chunks = (await streamed.text())
+      .split("\n\n")
+      .filter((line) => line.startsWith("data: ") && line !== "data: [DONE]")
+      .map((line) => JSON.parse(line.slice("data: ".length)));
+    const deltas = chunks.map((c) => c.choices[0].delta);
+    assert.equal(deltas.map((d) => d.reasoning_content ?? "").join(""), "I need to write the file.");
+    const firstTool = deltas.findIndex((d) => d.tool_calls);
+    const lastReasoning = deltas.findLastIndex((d) => d.reasoning_content);
+    assert.ok(lastReasoning < firstTool, "reasoning is streamed before the tool calls");
+    assert.equal(chunks[chunks.length - 1].choices[0].finish_reason, "length");
+  } finally {
+    gw.restore();
+  }
+});
+
+test("bridge leaves reasoning_content out when the model sends none", async () => {
+  const { hooks } = await makePlugin();
+  const gw = mockGateway(async () => new Response(JSON.stringify(aiProxyCompletion("plain")), { status: 200 }));
+  try {
+    const doFetch = await loaderFetch(hooks);
+    const payload = await (await doFetch(chatBody())).json();
+    assert.deepEqual(payload.choices[0].message, { role: "assistant", content: "plain" });
+    const streamed = await (await doFetch(chatBody({ stream: true }))).text();
+    assert.equal(streamed.includes("reasoning_content"), false);
+  } finally {
+    gw.restore();
+  }
+});
+
 /* ---------------- bridge: streaming ---------------- */
 
 test("bridge streaming: synthesizes SSE with role/content/finish chunks and [DONE]", async () => {

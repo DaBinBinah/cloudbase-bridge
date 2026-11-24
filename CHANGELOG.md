@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [SemVer](https://semver.org/).
 
+## [0.2.6] - 2026-11-24
+
+- Thinking-mode tool turns: `reasoning_content` is now returned by aiProxy
+  and the plugin (JSON and synthesized SSE), and aiProxy forwards it back
+  to the model on assistant messages that carry `tool_calls`. It was
+  dropped in both directions before.
+- A reply that ends at the token limit while carrying tool calls now keeps
+  `finish_reason: "length"` instead of being reported as `"tool_calls"`.
+- aiProxy 1.2.0, from #1 by @ryanuo: `topP: 0` is accepted (the range is
+  `[0, 1]`), and failures from the SDK or the model keep their `code` but
+  return a generic message; the original message goes to the function log.
+  Errors raised by aiProxy itself keep their text. **Redeploy the
+  function** (`tcb fn deploy aiProxy --force`) to get these; aiProxy 1.2.0
+  still works with plugin 0.2.4 and 0.2.5.
+
 ## [0.2.5] - 2026-11-24
 
 - Tool calling: the plugin now forwards `tools`, `tool_choice` and

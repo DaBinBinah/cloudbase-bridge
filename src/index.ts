@@ -36,7 +36,7 @@
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
 
-export const PLUGIN_VERSION = "0.2.5" as const;
+export const PLUGIN_VERSION = "0.2.6" as const;
 
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
@@ -463,6 +463,7 @@ interface NormalizedCompletion {
   created: number;
   model: string; // canonical model id used upstream
   content: string;
+  reasoningContent: string;
   toolCalls: ToolCall[];
   finishReason: string;
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
@@ -495,8 +496,17 @@ function normalizeCompletion(value: unknown): NormalizedCompletion | null {
       });
     }
   }
+  const reasoningContent = message && typeof message.reasoning_content === "string" ? message.reasoning_content : "";
+  // "length" wins over tool calls: a truncated reply can carry incomplete
+  // tool arguments, and the agent must not treat them as ready to run.
   const finishReason =
-    toolCalls.length > 0 ? "tool_calls" : typeof first.finish_reason === "string" ? first.finish_reason : "stop";
+    first.finish_reason === "length"
+      ? "length"
+      : toolCalls.length > 0
+        ? "tool_calls"
+        : typeof first.finish_reason === "string"
+          ? first.finish_reason
+          : "stop";
   const usage = isPlainObject(value.usage)
     ? {
         prompt_tokens: typeof value.usage.prompt_tokens === "number" ? value.usage.prompt_tokens : 0,
@@ -509,6 +519,7 @@ function normalizeCompletion(value: unknown): NormalizedCompletion | null {
     created: typeof value.created === "number" ? value.created : Math.floor(Date.now() / 1000),
     model: typeof value.model === "string" ? value.model : "",
     content,
+    reasoningContent,
     toolCalls,
     finishReason,
     usage,
@@ -535,8 +546,8 @@ function chunkFrame(base: { id: string; created: number; model: string }, delta:
 
 /**
  * Synthesize an SSE stream from the one-shot completion. Frames follow the
- * OpenAI Chat Completions streaming format: a role chunk, content chunks
- * (split on code-point boundaries), a final chunk carrying finish_reason and
+ * OpenAI Chat Completions streaming format: a role chunk, reasoning and
+ * content chunks (split on code-point boundaries), tool-call chunks, a final chunk carrying finish_reason and
  * usage, then the `data: [DONE]` sentinel.
  */
 function sseResponse(completion: NormalizedCompletion, echoModel: string): Response {
@@ -549,6 +560,9 @@ function sseResponse(completion: NormalizedCompletion, echoModel: string): Respo
       };
       try {
         send(chunkFrame(base, { role: "assistant", content: "" }, null));
+        for (const piece of chunkText(completion.reasoningContent, SSE_CHUNK_CHARS)) {
+          send(chunkFrame(base, { reasoning_content: piece }, null));
+        }
         for (const piece of chunkText(completion.content, SSE_CHUNK_CHARS)) {
           send(chunkFrame(base, { content: piece }, null));
         }
@@ -587,6 +601,11 @@ function sseResponse(completion: NormalizedCompletion, echoModel: string): Respo
 }
 
 function jsonCompletionResponse(completion: NormalizedCompletion, echoModel: string): Response {
+  const message: Json =
+    completion.toolCalls.length > 0
+      ? { role: "assistant", content: completion.content || null, tool_calls: completion.toolCalls }
+      : { role: "assistant", content: completion.content };
+  if (completion.reasoningContent) message.reasoning_content = completion.reasoningContent;
   const payload: Json = {
     id: completion.id,
     object: "chat.completion",
@@ -595,10 +614,7 @@ function jsonCompletionResponse(completion: NormalizedCompletion, echoModel: str
     choices: [
       {
         index: 0,
-        message:
-          completion.toolCalls.length > 0
-            ? { role: "assistant", content: completion.content || null, tool_calls: completion.toolCalls }
-            : { role: "assistant", content: completion.content },
+        message,
         finish_reason: completion.finishReason || "stop",
       },
     ],

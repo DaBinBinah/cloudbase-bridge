@@ -74,7 +74,7 @@ const server = createServer((req, res) => {
         JSON.stringify({
           ok: true,
           service: "aiProxy",
-          version: "1.1.0",
+          version: "1.2.0",
           env: "mock-env",
           models: ["hy3", "hy4", "hy4-preview", "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"],
         }),
