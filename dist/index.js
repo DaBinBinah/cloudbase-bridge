@@ -34,14 +34,15 @@
  * Version & constants (single source of truth; no imports allowed —  *
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
-export const PLUGIN_VERSION = "0.2.6";
+export const PLUGIN_VERSION = "0.2.7";
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
 const PROVIDER_ID = "cloudbase";
 const PROVIDER_ID_FALLBACK_PREFIX = "cloudbase-plugin/";
 const DEFAULT_FUNCTION_NAME = "aiProxy";
 const DEFAULT_TIMEOUT_MS = 150_000; // gateway invoke waits for the function; keep above the recommended 120 s function timeout
-const DEFAULT_MAX_EVENT_BYTES = 512 * 1024;
+// A CloudBase event function takes a synchronous event of up to 6 MB.
+const DEFAULT_MAX_EVENT_BYTES = 6 * 1024 * 1024;
 const SSE_CHUNK_CHARS = 200;
 const USER_AGENT = `opencode-cloudbase-bridge/${PLUGIN_VERSION}`;
 const GATEWAY_SUFFIX_CN = ".api.tcloudbasegateway.com";

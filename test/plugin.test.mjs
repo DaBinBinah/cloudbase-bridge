@@ -533,6 +533,28 @@ test("oversized conversations are rejected with 413", async () => {
   assert.equal(res.status, 413);
 });
 
+test("an agent history well past the old 512 KiB limit is forwarded", async () => {
+  const { hooks } = await makePlugin();
+  let forwardedBytes = 0;
+  const gw = mockGateway(async (_url, init) => {
+    forwardedBytes = new TextEncoder().encode(String(init.body)).byteLength;
+    return new Response(JSON.stringify(aiProxyCompletion()), { status: 200 });
+  });
+  try {
+    const doFetch = await loaderFetch(hooks);
+    const messages = [];
+    for (let i = 0; i < 400; i += 1) {
+      messages.push({ role: i % 2 === 0 ? "user" : "assistant", content: "历史".repeat(1_000) });
+    }
+    messages.push({ role: "user", content: "continue" });
+    const res = await doFetch(chatBody({ messages }));
+    assert.equal(res.status, 200);
+    assert.ok(forwardedBytes > 2 * 1024 * 1024, `forwarded ${forwardedBytes} bytes`);
+  } finally {
+    gw.restore();
+  }
+});
+
 test("payload limit counts UTF-8 bytes, not JavaScript string length (CJK content)", async () => {
   const { hooks } = await makePlugin();
   const gw = mockGateway(async () => new Response(JSON.stringify(aiProxyCompletion()), { status: 200 }));
@@ -543,10 +565,10 @@ test("payload limit counts UTF-8 bytes, not JavaScript string length (CJK conten
     const okRes = await doFetch(chatBody({ messages: [{ role: "user", content: "你好，世界" }] }));
     assert.equal(okRes.status, 200);
 
-    // 200_000 CJK chars: only 200_000 UTF-16 code units (below the 512 KiB
-    // limit, so a naive .length check would forward it), but ~600_000 UTF-8
-    // bytes (over the limit).
-    const cjk = "好".repeat(200_000);
+    // Half the limit in CJK chars: fewer UTF-16 code units than the limit
+    // (a naive .length check would forward it), but 1.5x the limit in
+    // UTF-8 bytes.
+    const cjk = "好".repeat(_internal.DEFAULT_MAX_EVENT_BYTES / 2);
     assert.ok(cjk.length < _internal.DEFAULT_MAX_EVENT_BYTES, "precondition: string length is under the limit");
     assert.ok(
       new TextEncoder().encode(cjk).byteLength > _internal.DEFAULT_MAX_EVENT_BYTES,
@@ -560,7 +582,7 @@ test("payload limit counts UTF-8 bytes, not JavaScript string length (CJK conten
     const match = payload.error.message.match(/too large \((\d+) bytes; limit (\d+) bytes\)/);
     assert.ok(match, `error message must report byte counts with byte units: ${payload.error.message}`);
     assert.ok(Number(match[1]) > Number(match[2]), "reported size must exceed the limit");
-    assert.ok(Number(match[1]) > 600_000, "reported size must be the UTF-8 byte count, not the char count");
+    assert.ok(Number(match[1]) >= 3 * cjk.length, "reported size must be the UTF-8 byte count, not the char count");
   } finally {
     gw.restore();
   }

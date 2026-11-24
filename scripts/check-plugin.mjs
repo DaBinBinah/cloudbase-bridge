@@ -65,7 +65,7 @@ function startMockGateway() {
           JSON.stringify({
             ok: true,
             service: "aiProxy",
-            version: "1.2.0",
+            version: "1.2.1",
             env: "env-mock",
             models: ["hy4-flash", "hy3", "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"],
           }),

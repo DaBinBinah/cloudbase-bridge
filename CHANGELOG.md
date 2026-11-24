@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [SemVer](https://semver.org/).
 
+## [0.2.7] - 2026-11-24
+
+- Request size: the plugin forwards requests of up to 6 MiB (was 512 KiB)
+  and aiProxy 1.2.1 accepts up to 10 000 messages and 6 MiB of message
+  text (was 128 messages / 400 000 chars). 6 MB is the synchronous event
+  size CloudBase functions accept. The old limits were far below the 1M
+  context the catalog declares, so agents hit `PAYLOAD_TOO_LARGE` (HTTP
+  413) long before they would compact their history. **Redeploy the
+  function** (`tcb fn deploy aiProxy --force`): with aiProxy 1.2.0 or
+  older, a request over the old limits is still rejected by the function.
+
 ## [0.2.6] - 2026-11-24
 
 - Thinking-mode tool turns: `reasoning_content` is now returned by aiProxy
