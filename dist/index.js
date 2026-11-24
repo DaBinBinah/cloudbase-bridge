@@ -65,6 +65,39 @@ function modelEntry(spec) {
         modalities: { input: spec.image ? ["text", "image"] : ["text"], output: ["text"] },
     };
 }
+/**
+ * Entry for a model the function's allowlist returned but the host's list
+ * (`provider.models`) lacks. Per the Magpie plugin docs that list is in the
+ * host model
+ * shape (`capabilities.input.image`), not the config-hook shape
+ * (`modalities`), so the entry is built from a sibling already in the list.
+ * An id outside the catalog is left image-capable: aiProxy forwards what it
+ * is sent and CloudBase decides.
+ */
+function accountModelEntry(id, base) {
+    const spec = MODEL_CATALOG[id];
+    const name = spec ? spec.name : id;
+    const limit = { context: spec ? spec.context : 131_072, output: spec ? spec.output : 16_384 };
+    const template = Object.values(base).find((model) => isPlainObject(model) && isPlainObject(model.capabilities));
+    if (!template) {
+        return spec ? modelEntry(spec) : { name, limit, tool_call: true };
+    }
+    const capabilities = template.capabilities;
+    const entry = {
+        ...template,
+        id,
+        name,
+        limit,
+        capabilities: {
+            ...capabilities,
+            toolcall: true,
+            input: { ...(isPlainObject(capabilities.input) ? capabilities.input : {}), text: true, image: spec ? spec.image : true },
+        },
+    };
+    if (isPlainObject(template.api))
+        entry.api = { ...template.api, id };
+    return entry;
+}
 /* ------------------------------------------------------------------ *
  * Small utilities.                                                   *
  * ------------------------------------------------------------------ */
@@ -745,14 +778,7 @@ export const CloudbaseBridge = async (input = {}, options = {}) => {
                         return base;
                     const out = {};
                     for (const id of pingModels) {
-                        const known = MODEL_CATALOG[id];
-                        // An id only the function's allowlist knows gets no `modalities`:
-                        // the host default applies and aiProxy forwards what it is sent.
-                        const entry = base[id]
-                            ? { ...base[id] }
-                            : known
-                                ? modelEntry(known)
-                                : { name: id, limit: { context: 131_072, output: 16_384 }, tool_call: true };
+                        const entry = base[id] ? { ...base[id] } : accountModelEntry(id, base);
                         // The deployed function's allowlist explicitly accepts this id
                         // (it just said so in the ping), so a static placeholder
                         // `disabled` flag from the config-hook catalog must not survive.

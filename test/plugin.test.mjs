@@ -666,6 +666,50 @@ test("client-side timeout maps to 504 and network errors to 502", async () => {
 
 /* ---------------- provider.models ---------------- */
 
+test("provider.models: a ping-only model is built in the host's model shape", async () => {
+  const { hooks } = await makePlugin();
+  // Shape the host passes to provider.models (OpenCode Model), with hy3 and
+  // a custom id missing because the user's config left them out.
+  const hy4 = {
+    id: "hy4",
+    name: "Hunyuan 4",
+    api: { id: "hy4", url: "https://cloudbase-bridge.invalid/v1", npm: "@ai-sdk/openai-compatible" },
+    limit: { context: 1_000_000, output: 16_384 },
+    capabilities: {
+      reasoning: false,
+      toolcall: true,
+      attachment: false,
+      input: { text: true, image: true, audio: false, video: false, pdf: false },
+      output: { text: true, image: false, audio: false, video: false, pdf: false },
+    },
+  };
+  const gw = mockGateway(async () =>
+    new Response(
+      JSON.stringify({ ok: true, service: "aiProxy", version: "1.3.0", env: "env-test-1", models: ["hy4", "hy3", "custom-vision"] }),
+      { status: 200 },
+    ),
+  );
+  try {
+    const refined = await hooks.provider.models({ models: { hy4 } }, { auth: fakeAuth() });
+    assert.deepEqual(refined.hy4, hy4);
+    assert.equal(refined.hy3.id, "hy3");
+    assert.equal(refined.hy3.name, "Hunyuan 3");
+    assert.equal(refined.hy3.api.id, "hy3");
+    assert.equal(refined.hy3.api.url, hy4.api.url);
+    assert.deepEqual(refined.hy3.limit, { context: 262_144, output: 16_384 });
+    assert.deepEqual(refined.hy3.capabilities.input, { text: true, image: false, audio: false, video: false, pdf: false });
+    assert.equal(refined.hy3.capabilities.toolcall, true);
+    assert.equal(refined.hy3.modalities, undefined);
+    assert.equal(refined["custom-vision"].capabilities.input.image, true);
+    assert.equal(refined["custom-vision"].api.id, "custom-vision");
+    // The sibling used as a template is not modified.
+    assert.equal(hy4.capabilities.input.image, true);
+    assert.equal(hy4.api.id, "hy4");
+  } finally {
+    gw.restore();
+  }
+});
+
 test("provider.models refines the list from aiProxy ping; failures keep the static list", async () => {
   const { hooks } = await makePlugin();
   const base = {
