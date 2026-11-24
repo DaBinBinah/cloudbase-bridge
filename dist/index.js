@@ -34,7 +34,7 @@
  * Version & constants (single source of truth; no imports allowed —  *
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
-export const PLUGIN_VERSION = "0.2.7";
+export const PLUGIN_VERSION = "0.2.8";
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
 const PROVIDER_ID = "cloudbase";
@@ -48,13 +48,23 @@ const USER_AGENT = `opencode-cloudbase-bridge/${PLUGIN_VERSION}`;
 const GATEWAY_SUFFIX_CN = ".api.tcloudbasegateway.com";
 const GATEWAY_SUFFIX_INTL = ".api.intl.tcloudbasegateway.com";
 const MODEL_CATALOG = {
-    "hy4-flash": { name: "Hunyuan 4 Flash", context: 1_000_000, output: 16_384, verified: true },
-    "hy4": { name: "Hunyuan 4", context: 1_000_000, output: 16_384, verified: true },
-    "hy4-preview": { name: "Hunyuan 4 Preview", context: 1_000_000, output: 16_384, verified: true },
-    "hy3": { name: "Hunyuan 3", context: 262_144, output: 16_384, verified: true },
-    "deepseek-v4.1-flash": { name: "DeepSeek V4.1 Flash", context: 1_000_000, output: 16_384, verified: true },
-    "deepseek-v4.1-flash-1017": { name: "DeepSeek V4.1 Flash 1017", context: 1_000_000, output: 16_384, verified: true },
+    "hy4-flash": { name: "Hunyuan 4 Flash", context: 1_000_000, output: 16_384, verified: true, image: true },
+    "hy4": { name: "Hunyuan 4", context: 1_000_000, output: 16_384, verified: true, image: true },
+    "hy4-preview": { name: "Hunyuan 4 Preview", context: 1_000_000, output: 16_384, verified: true, image: true },
+    "hy3": { name: "Hunyuan 3", context: 262_144, output: 16_384, verified: true, image: false },
+    "deepseek-v4.1-flash": { name: "DeepSeek V4.1 Flash", context: 1_000_000, output: 16_384, verified: true, image: true },
+    "deepseek-v4.1-flash-1017": { name: "DeepSeek V4.1 Flash 1017", context: 1_000_000, output: 16_384, verified: true, image: true },
 };
+/** Host-facing model entry. `modalities` tells the gateway and its agents
+ * which models can be sent images. */
+function modelEntry(spec) {
+    return {
+        name: spec.name,
+        limit: { context: spec.context, output: spec.output },
+        tool_call: true,
+        modalities: { input: spec.image ? ["text", "image"] : ["text"], output: ["text"] },
+    };
+}
 /* ------------------------------------------------------------------ *
  * Small utilities.                                                   *
  * ------------------------------------------------------------------ */
@@ -653,12 +663,7 @@ export const CloudbaseBridge = async (input = {}, options = {}) => {
                 api: `https://placeholder${GATEWAY_SUFFIX_CN}/v1`,
                 models: Object.fromEntries(Object.entries(MODEL_CATALOG).map(([id, spec]) => [
                     id,
-                    {
-                        name: spec.name,
-                        limit: { context: spec.context, output: spec.output },
-                        tool_call: true,
-                        ...(spec.verified ? {} : { disabled: true }),
-                    },
+                    { ...modelEntry(spec), ...(spec.verified ? {} : { disabled: true }) },
                 ])),
             };
         },
@@ -741,13 +746,13 @@ export const CloudbaseBridge = async (input = {}, options = {}) => {
                     const out = {};
                     for (const id of pingModels) {
                         const known = MODEL_CATALOG[id];
+                        // An id only the function's allowlist knows gets no `modalities`:
+                        // the host default applies and aiProxy forwards what it is sent.
                         const entry = base[id]
                             ? { ...base[id] }
-                            : {
-                                name: known?.name ?? id,
-                                limit: { context: known?.context ?? 131_072, output: known?.output ?? 16_384 },
-                                tool_call: true,
-                            };
+                            : known
+                                ? modelEntry(known)
+                                : { name: id, limit: { context: 131_072, output: 16_384 }, tool_call: true };
                         // The deployed function's allowlist explicitly accepts this id
                         // (it just said so in the ping), so a static placeholder
                         // `disabled` flag from the config-hook catalog must not survive.

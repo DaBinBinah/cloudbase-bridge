@@ -127,6 +127,10 @@ test("config hook declares provider with catalog; ??= preserves user config", as
   assert.ok(!models["hy3"].disabled && !models["hy4-preview"].disabled && !models["deepseek-v4.1-flash"].disabled);
   assert.equal(models["deepseek-v4.1-flash-1017"].name, "DeepSeek V4.1 Flash 1017");
   assert.equal(models["hy3"].tool_call, true);
+  // Image input per the official model list: every model but hy3.
+  for (const [id, model] of Object.entries(models)) {
+    assert.deepEqual(model.modalities, { input: id === "hy3" ? ["text"] : ["text", "image"], output: ["text"] }, id);
+  }
 
   // Second run must not overwrite user config.
   const userCfg = { provider: { cloudbase: { name: "Mine", models: { custom: {} } } } };
@@ -207,6 +211,26 @@ test("bridge non-streaming: adapts aiProxy JSON, echoes requested model id, send
     assert.equal(payload.model, "cloudbase/hy3", "response must echo the requested model id");
     assert.equal(payload.choices[0].message.content, "hello from hy3");
     assert.deepEqual(payload.usage.total_tokens, 14);
+  } finally {
+    gw.restore();
+  }
+});
+
+test("bridge forwards image_url parts to aiProxy unchanged and counts them in the size limit", async () => {
+  const { hooks } = await makePlugin();
+  const gw = mockGateway(async () => new Response(JSON.stringify(aiProxyCompletion("a cat")), { status: 200 }));
+  const content = (url) => [{ type: "text", text: "what is this?" }, { type: "image_url", image_url: { url } }];
+  try {
+    const doFetch = await loaderFetch(hooks);
+    const small = "data:image/png;base64," + "A".repeat(4096);
+    const res = await doFetch(chatBody({ model: "cloudbase/hy4", messages: [{ role: "user", content: content(small) }] }));
+    assert.equal(res.status, 200);
+    assert.deepEqual(JSON.parse(gw.calls[0].init.body).messages, [{ role: "user", content: content(small) }]);
+
+    const huge = "data:image/png;base64," + "A".repeat(_internal.DEFAULT_MAX_EVENT_BYTES);
+    const tooBig = await doFetch(chatBody({ model: "cloudbase/hy4", messages: [{ role: "user", content: content(huge) }] }));
+    assert.equal(tooBig.status, 413);
+    assert.equal(gw.calls.length, 1, "an oversized image must not reach the function");
   } finally {
     gw.restore();
   }
@@ -671,6 +695,8 @@ test("provider.models refines the list from aiProxy ping; failures keep the stat
       ["deepseek-v4.1-flash", "deepseek-v4.1-flash-1017", "hy3", "hy4"],
     );
     assert.equal(refined.hy3.name, "Hunyuan 3");
+    // An id missing from the stored list is rebuilt from the catalog.
+    assert.deepEqual(refined["deepseek-v4.1-flash"].modalities, { input: ["text", "image"], output: ["text"] });
     assert.equal(refined["deepseek-v4.1-flash"].limit.context, 1_000_000);
     // A model the deployed function's allowlist explicitly returns must not
     // keep a stale `disabled: true` from the static catalog.

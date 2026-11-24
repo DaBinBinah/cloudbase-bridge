@@ -11,7 +11,9 @@
  *     model: string,                  // e.g. "hy3"
  *     messages: [{ role, content }],  // roles: system | user | assistant | tool
  *                                     // (assistant may carry tool_calls,
- *                                     //  tool carries tool_call_id)
+ *                                     //  tool carries tool_call_id; user
+ *                                     //  content may be an array with
+ *                                     //  text and image_url parts)
  *     temperature?: number,           // 0..2
  *     topP?: number,                  // 0..1
  *     maxTokens?: number,             // positive integer
@@ -67,11 +69,18 @@ const DEFAULT_ALLOWED_MODELS = [
 const MAX_MESSAGES = 10_000;
 const MAX_SINGLE_MESSAGE_CHARS = 6 * 1024 * 1024;
 const MAX_TOTAL_MESSAGE_CHARS = 6 * 1024 * 1024;
+/** Models the official list marks as text-only
+ * (https://docs.cloudbase.net/ai/available-models, checked 2026-11-24).
+ * CloudBase ignores or rejects an image sent to them, so the proxy answers
+ * with a clear error instead. Every other model gets the image as is. */
+const TEXT_ONLY_MODELS = new Set(["hy3"]);
+const IMAGE_MODEL_HINT = "hy4, hy4-flash, deepseek-v4.1-flash";
+
 const MAX_MODEL_ID_LENGTH = 64;
 const MAX_TOOLS = 128;
 const MAX_TOOL_CALLS_PER_MESSAGE = 64;
 const MAX_TOOL_NAME_LENGTH = 128;
-const AI_PROXY_VERSION = "1.2.1";
+const AI_PROXY_VERSION = "1.3.0";
 
 /** Group name for the managed model pool — required by the official
  * growth-plan notice ("createModel 的参数改为 cloudbase"). The concrete
@@ -147,34 +156,78 @@ function isPlainObject(value) {
 const ALLOWED_ROLES = new Set(["system", "user", "assistant", "tool"]);
 
 /**
- * Reduce OpenAI message content to a string. Text array parts are
- * concatenated; anything else (images, files) is rejected. `allowEmpty`
- * accepts null/undefined (assistant messages that only carry tool_calls).
- * Returns { content } or { error }.
+ * Validate one `image_url` part and keep the documented fields. The model
+ * service fetches http(s) links itself; anything else has to be an inline
+ * `data:image/...;base64,` URL. Returns { part, chars } or { error }.
  */
-function normalizeContent(content, index, allowEmpty) {
-  if (typeof content === "string") return { content };
-  if ((content === null || content === undefined) && allowEmpty) return { content: "" };
+function normalizeImagePart(part, index, partIndex) {
+  const image = isPlainObject(part.image_url) ? part.image_url : null;
+  const url = image && typeof image.url === "string" ? image.url.trim() : "";
+  if (!/^https?:\/\/\S+$/i.test(url) && !/^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+$/i.test(url)) {
+    return errorEnvelope(
+        "INVALID_REQUEST",
+        `messages[${index}].content[${partIndex}].image_url.url must be an http(s) link or a data:image/...;base64 URL.`,
+      );
+  }
+  const out = { type: "image_url", image_url: { url } };
+  if (image.detail === "low" || image.detail === "high" || image.detail === "auto") {
+    out.image_url.detail = image.detail;
+  }
+  return { part: out, chars: url.length };
+}
+
+/**
+ * Normalize OpenAI message content. Text-only content becomes a string
+ * (text array parts are concatenated). A user message with `image_url`
+ * parts keeps the array form the CloudBase multimodal API takes
+ * (https://docs.cloudbase.net/ai/model/multimodal); other part types
+ * (video, file, audio) are rejected. `allowEmpty` accepts null/undefined
+ * (assistant messages that only carry tool_calls).
+ * Returns { content, chars, imagePartIndex? } or { error }.
+ */
+function normalizeContent(content, index, allowEmpty, role) {
+  if (typeof content === "string") return { content, chars: content.length };
+  if ((content === null || content === undefined) && allowEmpty) return { content: "", chars: 0 };
   if (Array.isArray(content)) {
-    // OpenAI multimodal array: keep text parts, refuse images/files.
-    const textParts = [];
+    const parts = [];
+    let chars = 0;
+    let imagePartIndex = -1;
     for (let partIndex = 0; partIndex < content.length; partIndex += 1) {
       const part = content[partIndex];
       if (isPlainObject(part) && part.type === "text" && typeof part.text === "string") {
-        textParts.push(part.text);
+        parts.push({ type: "text", text: part.text });
+        chars += part.text.length;
+        continue;
+      }
+      if (isPlainObject(part) && part.type === "image_url") {
+        if (role !== "user") {
+          return errorEnvelope(
+              "IMAGE_INPUT_NOT_SUPPORTED",
+              `messages[${index}].content[${partIndex}] is an image on a "${role}" message. CloudBase models take images on user messages only.`,
+            );
+        }
+        const image = normalizeImagePart(part, index, partIndex);
+        if (image.error) return { error: image.error };
+        parts.push(image.part);
+        chars += image.chars;
+        if (imagePartIndex < 0) imagePartIndex = partIndex;
         continue;
       }
       const partType = isPlainObject(part) && typeof part.type === "string" ? part.type : "unknown";
       return errorEnvelope(
-          "IMAGE_INPUT_NOT_SUPPORTED",
-          `messages[${index}].content[${partIndex}] has type "${partType.slice(0, 24)}". This proxy supports text only (the Node SDK channel used here documents string content; image input is not forwarded).`,
+          "INVALID_REQUEST",
+          `messages[${index}].content[${partIndex}] has type "${partType.slice(0, 24)}". This proxy forwards text and image_url parts only.`,
         );
     }
-    return { content: textParts.join("\n") };
+    if (imagePartIndex < 0) {
+      const text = parts.map((part) => part.text).join("\n");
+      return { content: text, chars: text.length };
+    }
+    return { content: parts, chars, imagePartIndex };
   }
   return errorEnvelope(
       "INVALID_REQUEST",
-      `messages[${index}].content must be a string or an array of text parts.`,
+      `messages[${index}].content must be a string or an array of text / image_url parts.`,
     );
 }
 
@@ -214,9 +267,11 @@ function normalizeToolCalls(toolCalls, index) {
 
 /**
  * Normalize one OpenAI-style message to the generateText input shape:
- * { role, content: string } plus `tool_calls` and `reasoning_content` on
- * assistant messages and `tool_call_id` on tool messages. Images and unknown roles are rejected
- * with a diagnostic error code. Returns { message, chars } or { error }.
+ * { role, content } plus `tool_calls` and `reasoning_content` on
+ * assistant messages and `tool_call_id` on tool messages. `content` is a
+ * string, or an array of text / image_url parts on a user message that
+ * carries images. Unknown roles are rejected with a diagnostic error code.
+ * Returns { message, chars, imagePartIndex? } or { error }.
  */
 function normalizeMessage(message, index) {
   if (!isPlainObject(message)) {
@@ -230,11 +285,10 @@ function normalizeMessage(message, index) {
       );
   }
   const hasToolCalls = role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0;
-  const normalizedContent = normalizeContent(message.content, index, hasToolCalls);
+  const normalizedContent = normalizeContent(message.content, index, hasToolCalls, role);
   if (normalizedContent.error) return { error: normalizedContent.error };
-  const content = normalizedContent.content;
-  const normalized = { role, content };
-  let chars = content.length;
+  const normalized = { role, content: normalizedContent.content };
+  let chars = normalizedContent.chars;
 
   if (hasToolCalls) {
     const calls = normalizeToolCalls(message.tool_calls, index);
@@ -260,7 +314,7 @@ function normalizeMessage(message, index) {
         `messages[${index}] is too large (${chars} chars; limit ${MAX_SINGLE_MESSAGE_CHARS}).`,
       );
   }
-  return { message: normalized, chars };
+  return { message: normalized, chars, imagePartIndex: normalizedContent.imagePartIndex };
 }
 
 /**
@@ -332,6 +386,12 @@ function validateChatEvent(event) {
   for (let index = 0; index < event.messages.length; index += 1) {
     const result = normalizeMessage(event.messages[index], index);
     if (result.error) return { error: result.error };
+    if (typeof result.imagePartIndex === "number" && TEXT_ONLY_MODELS.has(model)) {
+      return errorEnvelope(
+          "IMAGE_INPUT_NOT_SUPPORTED",
+          `messages[${index}].content[${result.imagePartIndex}] is an image, and model "${model}" takes text only. Use an image-capable model (${IMAGE_MODEL_HINT}), or remove the image from the conversation.`,
+        );
+    }
     const normalized = result.message;
     totalChars += result.chars;
     if (totalChars > MAX_TOTAL_MESSAGE_CHARS) {

@@ -30,7 +30,7 @@
  * - `dist/` must be committed so the GitHub-topic discovery path can load
  *   the plugin straight from the repository.
  */
-export declare const PLUGIN_VERSION: "0.2.7";
+export declare const PLUGIN_VERSION: "0.2.8";
 /**
  * Model catalog (text chat models).
  *
@@ -48,15 +48,21 @@ export declare const PLUGIN_VERSION: "0.2.7";
  *   Official docs do not list `hy4-flash` yet; its 1M context follows the
  *   hy4 family — adjust if your console says otherwise.
  * - `hy-image-v3.5-preview` is an image-generation model and is NOT in this
- *   catalog: this bridge only does text chat (generateText).
+ *   catalog: this bridge only does chat (generateText), with text and
+ *   image input and text output.
  *
  * `verified` means "enabled by default", not "officially documented".
+ * `image` follows the 图片 column of
+ * https://docs.cloudbase.net/ai/available-models (checked 2026-11-24);
+ * `hy4-preview` is not in that table and is served as `hy4` from
+ * 2026-12-07.
  */
 interface ModelSpec {
     name: string;
     context: number;
     output: number;
     verified: boolean;
+    image: boolean;
 }
 type Json = Record<string, unknown>;
 interface AuthData {
@@ -231,7 +237,7 @@ export declare const CloudbaseBridge: (input?: PluginInput, options?: PluginOpti
     };
 }>;
 export declare const _internal: {
-    PLUGIN_VERSION: "0.2.7";
+    PLUGIN_VERSION: "0.2.8";
     PROVIDER_ID: string;
     DEFAULT_FUNCTION_NAME: string;
     DEFAULT_TIMEOUT_MS: number;

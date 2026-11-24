@@ -36,7 +36,7 @@
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
 
-export const PLUGIN_VERSION = "0.2.7" as const;
+export const PLUGIN_VERSION = "0.2.8" as const;
 
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
@@ -70,25 +70,42 @@ const GATEWAY_SUFFIX_INTL = ".api.intl.tcloudbasegateway.com";
  *   Official docs do not list `hy4-flash` yet; its 1M context follows the
  *   hy4 family — adjust if your console says otherwise.
  * - `hy-image-v3.5-preview` is an image-generation model and is NOT in this
- *   catalog: this bridge only does text chat (generateText).
+ *   catalog: this bridge only does chat (generateText), with text and
+ *   image input and text output.
  *
  * `verified` means "enabled by default", not "officially documented".
+ * `image` follows the 图片 column of
+ * https://docs.cloudbase.net/ai/available-models (checked 2026-11-24);
+ * `hy4-preview` is not in that table and is served as `hy4` from
+ * 2026-12-07.
  */
 interface ModelSpec {
   name: string;
   context: number;
   output: number;
   verified: boolean;
+  image: boolean;
 }
 
 const MODEL_CATALOG: Readonly<Record<string, ModelSpec>> = {
-  "hy4-flash": { name: "Hunyuan 4 Flash", context: 1_000_000, output: 16_384, verified: true },
-  "hy4": { name: "Hunyuan 4", context: 1_000_000, output: 16_384, verified: true },
-  "hy4-preview": { name: "Hunyuan 4 Preview", context: 1_000_000, output: 16_384, verified: true },
-  "hy3": { name: "Hunyuan 3", context: 262_144, output: 16_384, verified: true },
-  "deepseek-v4.1-flash": { name: "DeepSeek V4.1 Flash", context: 1_000_000, output: 16_384, verified: true },
-  "deepseek-v4.1-flash-1017": { name: "DeepSeek V4.1 Flash 1017", context: 1_000_000, output: 16_384, verified: true },
+  "hy4-flash": { name: "Hunyuan 4 Flash", context: 1_000_000, output: 16_384, verified: true, image: true },
+  "hy4": { name: "Hunyuan 4", context: 1_000_000, output: 16_384, verified: true, image: true },
+  "hy4-preview": { name: "Hunyuan 4 Preview", context: 1_000_000, output: 16_384, verified: true, image: true },
+  "hy3": { name: "Hunyuan 3", context: 262_144, output: 16_384, verified: true, image: false },
+  "deepseek-v4.1-flash": { name: "DeepSeek V4.1 Flash", context: 1_000_000, output: 16_384, verified: true, image: true },
+  "deepseek-v4.1-flash-1017": { name: "DeepSeek V4.1 Flash 1017", context: 1_000_000, output: 16_384, verified: true, image: true },
 };
+
+/** Host-facing model entry. `modalities` tells the gateway and its agents
+ * which models can be sent images. */
+function modelEntry(spec: ModelSpec): Json {
+  return {
+    name: spec.name,
+    limit: { context: spec.context, output: spec.output },
+    tool_call: true,
+    modalities: { input: spec.image ? ["text", "image"] : ["text"], output: ["text"] },
+  };
+}
 
 /* ------------------------------------------------------------------ *
  * Minimal structural types (no runtime dependencies).                *
@@ -907,12 +924,7 @@ export const CloudbaseBridge = async (
         models: Object.fromEntries(
           Object.entries(MODEL_CATALOG).map(([id, spec]) => [
             id,
-            {
-              name: spec.name,
-              limit: { context: spec.context, output: spec.output },
-              tool_call: true,
-              ...(spec.verified ? {} : { disabled: true }),
-            },
+            { ...modelEntry(spec), ...(spec.verified ? {} : { disabled: true }) },
           ]),
         ),
       };
@@ -994,13 +1006,13 @@ export const CloudbaseBridge = async (
           const out: Record<string, Json> = {};
           for (const id of pingModels) {
             const known = MODEL_CATALOG[id];
+            // An id only the function's allowlist knows gets no `modalities`:
+            // the host default applies and aiProxy forwards what it is sent.
             const entry: Json = base[id]
               ? { ...base[id] }
-              : {
-                  name: known?.name ?? id,
-                  limit: { context: known?.context ?? 131_072, output: known?.output ?? 16_384 },
-                  tool_call: true,
-                };
+              : known
+                ? modelEntry(known)
+                : { name: id, limit: { context: 131_072, output: 16_384 }, tool_call: true };
             // The deployed function's allowlist explicitly accepts this id
             // (it just said so in the ping), so a static placeholder
             // `disabled` flag from the config-hook catalog must not survive.
