@@ -30,7 +30,7 @@ Agent ─► magpie 网关 ─► 插件 ── POST /v1/functions/aiProxy ─�
 | --- | --- | --- |
 | `hy4-flash` | 1M | 支持 |
 | `hy4` | 1M | 支持 |
-| `hy4-preview` | 1M | 支持（2026-12-07 下线，之后按 `hy4` 提供） |
+| `hy4-preview` | 1M | 官方列表未注明，图片会照常转发（2026-12-07 下线，之后按 `hy4` 提供） |
 | `hy3` | 256K | 不支持 |
 | `deepseek-v4.1-flash` | 1M | 支持 |
 | `deepseek-v4.1-flash-1017` | 1M | 支持 |

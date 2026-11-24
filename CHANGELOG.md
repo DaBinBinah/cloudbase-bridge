@@ -15,6 +15,10 @@ All notable changes to this project are documented here. The format follows
   the image-capable models. **Redeploy the function**
   (`tcb fn deploy aiProxy --force`); plugins 0.2.4 to 0.2.7 already pass
   the parts through, so the function update alone enables images.
+  Checked on a live environment with `hy4`, `hy4-flash`,
+  `deepseek-v4.1-flash` and `deepseek-v4.1-flash-1017` (data URLs up to
+  5.2 MB, `https` links, images kept in history, images with tool calls);
+  `hy4-preview` could not be checked.
 - The model catalog declares `modalities` per model, so the host stops
   offering image input for `hy3`.
 

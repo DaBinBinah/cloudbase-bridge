@@ -26,7 +26,7 @@ The function returns one complete result; the plugin reshapes it into OpenAI Cha
 | --- | --- | --- |
 | `hy4-flash` | 1M | yes |
 | `hy4` | 1M | yes |
-| `hy4-preview` | 1M | yes (retired 2026-12-07, then served as `hy4`) |
+| `hy4-preview` | 1M | not in the official list; images are forwarded (retired 2026-12-07, then served as `hy4`) |
 | `hy3` | 256K | no |
 | `deepseek-v4.1-flash` | 1M | yes |
 | `deepseek-v4.1-flash-1017` | 1M | yes |
