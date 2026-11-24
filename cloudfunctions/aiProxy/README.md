@@ -33,7 +33,7 @@ automatically.
     { "role": "user", "content": "Hello" }
   ],
   "temperature": 0.7,          // optional, 0..2
-  "topP": 0.9,                 // optional, (0, 1]
+  "topP": 0.9,                 // optional, [0, 1]
   "maxTokens": 1024,           // optional, positive integer
   "tools": [                   // optional, OpenAI function tools
     { "type": "function", "function": { "name": "read_file", "description": "...", "parameters": { "type": "object" } } }
@@ -46,7 +46,14 @@ Messages may also use the `tool` role (with `tool_call_id`) and assistant
 messages may carry `tool_calls`, so an agent can send tool results back.
 The function never runs a tool itself: it asks the model for one step and
 returns the model's `tool_calls` (with `finish_reason: "tool_calls"`) to
-the caller.
+the caller. A reply cut off at the token limit keeps `finish_reason:
+"length"` even when it carries tool calls, because their arguments can be
+incomplete.
+
+Thinking-mode models: `message.reasoning_content` is returned when the model
+sends it, and is forwarded back to the model on every assistant message
+that carries it (such models reject a tool-enabled request whose earlier
+turns lack their reasoning).
 
 Image parts are rejected with `IMAGE_INPUT_NOT_SUPPORTED` because the
 `generateText` input carries plain string content.
@@ -71,6 +78,14 @@ Failure — `{ "error": { "code": "…", "message": "…", "requestId": "…" } 
 with codes such as `INVALID_REQUEST`, `MODEL_NOT_ALLOWED`,
 `AI_CHANNEL_NOT_ALLOWED`, `AI_MODEL_NOT_SUPPORTED`,
 `EXCEED_TOKEN_QUOTA_LIMIT`, `TCB_ENV_MISSING`, `UPSTREAM_ERROR`.
+
+Errors raised by the function itself (`INVALID_REQUEST`,
+`IMAGE_INPUT_NOT_SUPPORTED`, `MODEL_NOT_ALLOWED`, `TCB_ENV_MISSING`, a
+missing SDK) keep their full message. Failures from the SDK or the model
+keep their `code`, but the message is replaced by a generic one so
+endpoints, account ids and quota details do not reach the client. The
+original message is written to the function log (`[aiProxy] model call
+failed`) together with the `requestId`.
 
 ## Deploy — Option A: console (控制台上传)
 

@@ -9,6 +9,11 @@ model rejections, no account marking), **429 for quota/concurrency**, 502/504
 for failures. Error messages never contain your API Key, conversation
 content, or full headers; `requestId` is preserved for support tickets.
 
+Since aiProxy 1.2.0, failures from the SDK or the model keep their `code`
+but carry a generic message. The original message is in the function log
+(CloudBase console → 云函数 → aiProxy → 日志), under
+`[aiProxy] model call failed` with the same `requestId`.
+
 ---
 
 ## 1. `FUNCTIONS_NOT_FOUND` (HTTP 404)

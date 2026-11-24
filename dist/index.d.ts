@@ -30,7 +30,7 @@
  * - `dist/` must be committed so the GitHub-topic discovery path can load
  *   the plugin straight from the repository.
  */
-export declare const PLUGIN_VERSION: "0.2.5";
+export declare const PLUGIN_VERSION: "0.2.6";
 /**
  * Model catalog (text chat models).
  *
@@ -163,6 +163,7 @@ interface NormalizedCompletion {
     created: number;
     model: string;
     content: string;
+    reasoningContent: string;
     toolCalls: ToolCall[];
     finishReason: string;
     usage: {
@@ -178,8 +179,8 @@ interface NormalizedCompletion {
 declare function normalizeCompletion(value: unknown): NormalizedCompletion | null;
 /**
  * Synthesize an SSE stream from the one-shot completion. Frames follow the
- * OpenAI Chat Completions streaming format: a role chunk, content chunks
- * (split on code-point boundaries), a final chunk carrying finish_reason and
+ * OpenAI Chat Completions streaming format: a role chunk, reasoning and
+ * content chunks (split on code-point boundaries), tool-call chunks, a final chunk carrying finish_reason and
  * usage, then the `data: [DONE]` sentinel.
  */
 declare function sseResponse(completion: NormalizedCompletion, echoModel: string): Response;
@@ -230,7 +231,7 @@ export declare const CloudbaseBridge: (input?: PluginInput, options?: PluginOpti
     };
 }>;
 export declare const _internal: {
-    PLUGIN_VERSION: "0.2.5";
+    PLUGIN_VERSION: "0.2.6";
     PROVIDER_ID: string;
     DEFAULT_FUNCTION_NAME: string;
     DEFAULT_TIMEOUT_MS: number;

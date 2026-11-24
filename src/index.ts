@@ -36,7 +36,7 @@
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
 
-export const PLUGIN_VERSION = "0.2.5" as const;
+export const PLUGIN_VERSION = "0.2.6" as const;
 
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
@@ -463,9 +463,18 @@ interface NormalizedCompletion {
   created: number;
   model: string; // canonical model id used upstream
   content: string;
+  reasoningContent: string;
   toolCalls: ToolCall[];
   finishReason: string;
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
+}
+
+function isJsonObjectText(text: string): boolean {
+  try {
+    return isPlainObject(JSON.parse(text));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -480,11 +489,15 @@ function normalizeCompletion(value: unknown): NormalizedCompletion | null {
   if (!isPlainObject(first)) return null;
   const message = isPlainObject(first.message) ? first.message : null;
   const content = message && typeof message.content === "string" ? message.content : "";
+  const truncated = first.finish_reason === "length";
   const toolCalls: ToolCall[] = [];
   if (message && Array.isArray(message.tool_calls)) {
     for (const call of message.tool_calls) {
       const fn = isPlainObject(call) && isPlainObject(call.function) ? call.function : null;
       if (!isPlainObject(call) || !fn || typeof fn.name !== "string" || fn.name.length === 0) continue;
+      // A reply cut off at the token limit can end inside a tool call's
+      // arguments; a call the agent cannot parse must not be dispatched.
+      if (truncated && typeof fn.arguments === "string" && !isJsonObjectText(fn.arguments)) continue;
       toolCalls.push({
         id: typeof call.id === "string" && call.id.length > 0 ? call.id : `call_${Date.now().toString(36)}${toolCalls.length}`,
         type: "function",
@@ -495,8 +508,15 @@ function normalizeCompletion(value: unknown): NormalizedCompletion | null {
       });
     }
   }
+  const reasoningContent = message && typeof message.reasoning_content === "string" ? message.reasoning_content : "";
   const finishReason =
-    toolCalls.length > 0 ? "tool_calls" : typeof first.finish_reason === "string" ? first.finish_reason : "stop";
+    truncated
+      ? "length"
+      : toolCalls.length > 0
+        ? "tool_calls"
+        : typeof first.finish_reason === "string"
+          ? first.finish_reason
+          : "stop";
   const usage = isPlainObject(value.usage)
     ? {
         prompt_tokens: typeof value.usage.prompt_tokens === "number" ? value.usage.prompt_tokens : 0,
@@ -509,6 +529,7 @@ function normalizeCompletion(value: unknown): NormalizedCompletion | null {
     created: typeof value.created === "number" ? value.created : Math.floor(Date.now() / 1000),
     model: typeof value.model === "string" ? value.model : "",
     content,
+    reasoningContent,
     toolCalls,
     finishReason,
     usage,
@@ -535,8 +556,8 @@ function chunkFrame(base: { id: string; created: number; model: string }, delta:
 
 /**
  * Synthesize an SSE stream from the one-shot completion. Frames follow the
- * OpenAI Chat Completions streaming format: a role chunk, content chunks
- * (split on code-point boundaries), a final chunk carrying finish_reason and
+ * OpenAI Chat Completions streaming format: a role chunk, reasoning and
+ * content chunks (split on code-point boundaries), tool-call chunks, a final chunk carrying finish_reason and
  * usage, then the `data: [DONE]` sentinel.
  */
 function sseResponse(completion: NormalizedCompletion, echoModel: string): Response {
@@ -549,6 +570,9 @@ function sseResponse(completion: NormalizedCompletion, echoModel: string): Respo
       };
       try {
         send(chunkFrame(base, { role: "assistant", content: "" }, null));
+        for (const piece of chunkText(completion.reasoningContent, SSE_CHUNK_CHARS)) {
+          send(chunkFrame(base, { reasoning_content: piece }, null));
+        }
         for (const piece of chunkText(completion.content, SSE_CHUNK_CHARS)) {
           send(chunkFrame(base, { content: piece }, null));
         }
@@ -587,6 +611,11 @@ function sseResponse(completion: NormalizedCompletion, echoModel: string): Respo
 }
 
 function jsonCompletionResponse(completion: NormalizedCompletion, echoModel: string): Response {
+  const message: Json =
+    completion.toolCalls.length > 0
+      ? { role: "assistant", content: completion.content || null, tool_calls: completion.toolCalls }
+      : { role: "assistant", content: completion.content };
+  if (completion.reasoningContent) message.reasoning_content = completion.reasoningContent;
   const payload: Json = {
     id: completion.id,
     object: "chat.completion",
@@ -595,10 +624,7 @@ function jsonCompletionResponse(completion: NormalizedCompletion, echoModel: str
     choices: [
       {
         index: 0,
-        message:
-          completion.toolCalls.length > 0
-            ? { role: "assistant", content: completion.content || null, tool_calls: completion.toolCalls }
-            : { role: "assistant", content: completion.content },
+        message,
         finish_reason: completion.finishReason || "stop",
       },
     ],

@@ -21,7 +21,7 @@
  * Reply on success (HTTP 200 body = this return value, per the functions
  * OpenAPI — there is no wrapper envelope):
  *   { id, object: "chat.completion", created, model,
- *     choices: [{ index, message: { role, content, tool_calls? }, finish_reason }],
+ *     choices: [{ index, message: { role, content, reasoning_content?, tool_calls? }, finish_reason }],
  *     usage: { prompt_tokens, completion_tokens, total_tokens } }
  *
  * Reply on failure:
@@ -29,6 +29,8 @@
  *   Codes: INVALID_REQUEST, IMAGE_INPUT_NOT_SUPPORTED, MODEL_NOT_ALLOWED,
  *   AI_CHANNEL_NOT_ALLOWED, AI_MODEL_NOT_SUPPORTED, EXCEED_TOKEN_QUOTA_LIMIT,
  *   TCB_ENV_MISSING, UPSTREAM_ERROR — mapped to HTTP statuses by the plugin.
+ *   Failures from the SDK or the model keep their code; their message is
+ *   replaced by a generic one and the original is written to the log.
  *
  * Deployment notes:
  * - Runtime: Node.js (Nodejs18.15 or newer). Dependencies are installed by
@@ -67,7 +69,7 @@ const MAX_MODEL_ID_LENGTH = 64;
 const MAX_TOOLS = 128;
 const MAX_TOOL_CALLS_PER_MESSAGE = 64;
 const MAX_TOOL_NAME_LENGTH = 128;
-const AI_PROXY_VERSION = "1.1.0";
+const AI_PROXY_VERSION = "1.2.0";
 
 /** Group name for the managed model pool — required by the official
  * growth-plan notice ("createModel 的参数改为 cloudbase"). The concrete
@@ -93,6 +95,21 @@ function safeErrorMessage(err) {
   }
   // Never echo secrets (none should be present) and keep it bounded.
   return message.length > 300 ? message.slice(0, 300) + "…" : message;
+}
+
+/**
+ * Error envelope for a failed model call. Errors raised by this function
+ * itself (`expose`) keep their actionable text. Anything from the SDK or
+ * the model keeps its code but not its message, which can name endpoints,
+ * account ids or quota internals; the full text goes to the function log.
+ */
+function failureEnvelope(err, requestId) {
+  const code = pickUpstreamCode(err) || "UPSTREAM_ERROR";
+  if (err && err.expose === true) {
+    return errorEnvelope(code, safeErrorMessage(err), requestId);
+  }
+  console.error("[aiProxy] model call failed", { code, requestId, message: safeErrorMessage(err) });
+  return errorEnvelope(code, `The model call failed (${code}). See the aiProxy function logs for details.`, requestId);
 }
 
 function pickUpstreamCode(err) {
@@ -195,8 +212,8 @@ function normalizeToolCalls(toolCalls, index) {
 
 /**
  * Normalize one OpenAI-style message to the generateText input shape:
- * { role, content: string } plus `tool_calls` on assistant messages and
- * `tool_call_id` on tool messages. Images and unknown roles are rejected
+ * { role, content: string } plus `tool_calls` and `reasoning_content` on
+ * assistant messages and `tool_call_id` on tool messages. Images and unknown roles are rejected
  * with a diagnostic error code. Returns { message, chars } or { error }.
  */
 function normalizeMessage(message, index) {
@@ -222,6 +239,12 @@ function normalizeMessage(message, index) {
     if (calls.error) return { error: calls.error };
     normalized.tool_calls = calls.toolCalls;
     chars += calls.chars;
+  }
+  // Thinking-mode models reject a tool-enabled request whose earlier
+  // assistant turns come back without their reasoning.
+  if (role === "assistant" && typeof message.reasoning_content === "string" && message.reasoning_content.length > 0) {
+    normalized.reasoning_content = message.reasoning_content;
+    chars += message.reasoning_content.length;
   }
   if (role === "tool") {
     if (typeof message.tool_call_id !== "string" || message.tool_call_id.length === 0) {
@@ -326,8 +349,8 @@ function validateChatEvent(event) {
     params.temperature = event.temperature;
   }
   if (typeof event.topP === "number" && Number.isFinite(event.topP)) {
-    if (event.topP <= 0 || event.topP > 1) {
-      return errorEnvelope("INVALID_REQUEST", "event.topP must be in (0, 1].");
+    if (event.topP < 0 || event.topP > 1) {
+      return errorEnvelope("INVALID_REQUEST", "event.topP must be between 0 and 1.");
     }
     params.topP = event.topP;
   }
@@ -425,6 +448,9 @@ function buildChatCompletion(result, model, requestId, inputMessageCount) {
   const { message: lastMessage, finishReason } = pickLastChoice(result, inputMessageCount);
   const toolCalls = pickToolCalls(lastMessage);
   const message = { role: "assistant", content: toolCalls.length > 0 && text.length === 0 ? null : text };
+  if (isPlainObject(lastMessage) && typeof lastMessage.reasoning_content === "string" && lastMessage.reasoning_content.length > 0) {
+    message.reasoning_content = lastMessage.reasoning_content;
+  }
   if (toolCalls.length > 0) message.tool_calls = toolCalls;
   return {
     id: newCompletionId(),
@@ -435,12 +461,16 @@ function buildChatCompletion(result, model, requestId, inputMessageCount) {
       {
         index: 0,
         message,
+        // "length" wins over tool calls: a reply cut off at the token limit
+        // can carry incomplete tool arguments.
         finish_reason:
-          toolCalls.length > 0
-            ? "tool_calls"
-            : typeof finishReason === "string" && finishReason.length > 0 && finishReason !== "tool_calls"
-              ? finishReason
-              : "stop",
+          finishReason === "length"
+            ? "length"
+            : toolCalls.length > 0
+              ? "tool_calls"
+              : typeof finishReason === "string" && finishReason.length > 0 && finishReason !== "tool_calls"
+                ? finishReason
+                : "stop",
       },
     ],
     usage: normalizeUsage(result && result.usage),
@@ -496,9 +526,11 @@ function loadSdk() {
   try {
     sdkModule = require("@cloudbase/node-sdk");
   } catch (err) {
-    throw new Error(
+    const missing = new Error(
       "The @cloudbase/node-sdk dependency is missing. Deploy with installDependency enabled (cloudbaserc) or upload node_modules with the function code.",
     );
+    missing.expose = true;
+    throw missing;
   }
   return sdkModule;
 }
@@ -512,6 +544,7 @@ function getApp() {
       "TCB_ENV is not set. The CloudBase runtime normally injects it; add it to the function environment variables if you run this outside CloudBase.",
     );
     missing.code = "TCB_ENV_MISSING";
+    missing.expose = true;
     throw missing;
   }
   app = tcb.init({ env: envId });
@@ -538,16 +571,11 @@ async function callModel(params, requestId) {
   try {
     const result = await getChatModel().generateText(buildGenerateInput(params));
     if (result && result.error) {
-      const code = pickUpstreamCode(result.error) || "UPSTREAM_ERROR";
-      return errorEnvelope(code, safeErrorMessage(result.error), requestId);
+      return failureEnvelope(result.error, requestId);
     }
     return { completion: buildChatCompletion(result, params.model, requestId, params.messages.length) };
   } catch (err) {
-    const code = pickUpstreamCode(err);
-    if (code) {
-      return errorEnvelope(code, safeErrorMessage(err), requestId);
-    }
-    return errorEnvelope("UPSTREAM_ERROR", safeErrorMessage(err), requestId);
+    return failureEnvelope(err, requestId);
   }
 }
 
@@ -577,8 +605,7 @@ exports.main = async (event, context) => {
     }
     return outcome.completion;
   } catch (err) {
-    const code = pickUpstreamCode(err) || (err && err.code) || "UPSTREAM_ERROR";
-    return errorEnvelope(code, safeErrorMessage(err), requestId);
+    return failureEnvelope(err, requestId);
   }
 };
 
@@ -605,4 +632,5 @@ exports._internal = {
   pingResult,
   safeErrorMessage,
   pickUpstreamCode,
+  failureEnvelope,
 };

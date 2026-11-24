@@ -184,11 +184,55 @@ test("validateChatEvent rejects out-of-range sampling params and oversized input
   });
   assert.deepEqual(badTemp.error.code, "INVALID_REQUEST");
 
+  for (const topP of [-0.1, 1.1]) {
+    const badTopP = _internal.validateChatEvent({ model: "hy3", messages: [{ role: "user", content: "hi" }], topP });
+    assert.deepEqual(badTopP.error.code, "INVALID_REQUEST");
+  }
+  for (const topP of [0, 1]) {
+    const okTopP = _internal.validateChatEvent({ model: "hy3", messages: [{ role: "user", content: "hi" }], topP });
+    assert(!okTopP.error, `topP ${topP} is in range`);
+    assert.deepEqual(okTopP.params.topP, topP);
+    assert.deepEqual(_internal.buildGenerateInput(okTopP.params).topP, topP);
+  }
+
   const tooBig = _internal.validateChatEvent({
     model: "hy3",
     messages: [{ role: "user", content: "x".repeat(_internal.MAX_SINGLE_MESSAGE_CHARS + 1) }],
   });
   assert.deepEqual(tooBig.error.code, "INVALID_REQUEST");
+  assert.match(tooBig.error.message, /too large/);
+});
+
+test("validateChatEvent keeps reasoning_content on every assistant message that carries it", () => {
+  const toolCall = { id: "call_1", type: "function", function: { name: "read_file", arguments: "{}" } };
+  const result = _internal.validateChatEvent({
+    model: "hy4",
+    messages: [
+      { role: "user", content: "read it" },
+      { role: "assistant", content: "", reasoning_content: "I should read the file.", tool_calls: [toolCall] },
+      { role: "tool", tool_call_id: "call_1", content: "42" },
+      { role: "assistant", content: "It says 42.", reasoning_content: "The tool returned 42." },
+      { role: "user", content: "thanks", reasoning_content: "not an assistant message" },
+      { role: "assistant", content: "Welcome.", reasoning_content: "" },
+    ],
+  });
+  assert(!result.error);
+  assert.deepEqual(result.params.messages[1], {
+    role: "assistant",
+    content: "",
+    tool_calls: [toolCall],
+    reasoning_content: "I should read the file.",
+  });
+  assert.deepEqual(result.params.messages[3], { role: "assistant", content: "It says 42.", reasoning_content: "The tool returned 42." });
+  assert.deepEqual(result.params.messages[4], { role: "user", content: "thanks" });
+  assert.deepEqual(result.params.messages[5], { role: "assistant", content: "Welcome." });
+
+  const tooBig = _internal.validateChatEvent({
+    model: "hy4",
+    messages: [
+      { role: "assistant", content: "", reasoning_content: "x".repeat(_internal.MAX_SINGLE_MESSAGE_CHARS), tool_calls: [toolCall] },
+    ],
+  });
   assert.match(tooBig.error.message, /too large/);
 });
 
@@ -274,6 +318,38 @@ test("buildChatCompletion returns the model's tool calls with finish_reason tool
   assert.deepEqual(truncated.choices[0].finish_reason, "length");
 });
 
+test("buildChatCompletion keeps reasoning_content and reports truncated tool calls as length", () => {
+  const toolCall = { id: "call_9", type: "function", function: { name: "read_file", arguments: '{"path":"no' } };
+  const usage = { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28 };
+
+  const thinking = { role: "assistant", content: "", reasoning_content: "Need the file first.", tool_calls: [{ ...toolCall, function: { name: "read_file", arguments: "{}" } }] };
+  const withReasoning = _internal.buildChatCompletion(
+    { text: "", usage, rawResponses: [{ choices: [{ message: thinking, finish_reason: "tool_calls" }] }] },
+    "hy4",
+  );
+  assert.deepEqual(withReasoning.choices[0].message.reasoning_content, "Need the file first.");
+  assert.deepEqual(withReasoning.choices[0].finish_reason, "tool_calls");
+
+  const textOnly = _internal.buildChatCompletion(
+    { text: "hi", usage, rawResponses: [{ choices: [{ message: { role: "assistant", content: "hi", reasoning_content: "Greet." }, finish_reason: "stop" }] }] },
+    "hy4",
+  );
+  assert.deepEqual(textOnly.choices[0].message, { role: "assistant", content: "hi", reasoning_content: "Greet." });
+
+  const noReasoning = _internal.buildChatCompletion(
+    { text: "hi", usage, rawResponses: [{ choices: [{ message: { role: "assistant", content: "hi", reasoning_content: "" }, finish_reason: "stop" }] }] },
+    "hy4",
+  );
+  assert.deepEqual(noReasoning.choices[0].message, { role: "assistant", content: "hi" });
+
+  const cutOff = _internal.buildChatCompletion(
+    { text: "", usage, rawResponses: [{ choices: [{ message: { role: "assistant", content: "", tool_calls: [toolCall] }, finish_reason: "length" }] }] },
+    "hy4",
+  );
+  assert.deepEqual(cutOff.choices[0].finish_reason, "length");
+  assert.deepEqual(cutOff.choices[0].message.tool_calls, [toolCall]);
+});
+
 /* ---------------- main entry with injected callModel ---------------- */
 
 function withInjectedCallModel(fake) {
@@ -337,18 +413,98 @@ test("exports.main returns error envelope for invalid events", async () => {
   assert.deepEqual(reply.error.code, "INVALID_REQUEST");
 });
 
-test("exports.main catches thrown SDK errors as UPSTREAM_ERROR with upstream code kept", async () => {
+test("exports.main catches thrown SDK errors: upstream code kept, upstream message hidden", async () => {
   const restore = withInjectedCallModel(async () => {
-    const err = new Error("channel refused");
+    const err = new Error("channel refused by gateway-7.internal");
     err.code = "AI_CHANNEL_NOT_ALLOWED";
     throw err;
   });
+  const originalConsoleError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
   try {
-    const reply = await aiProxy.main({ model: "hy3", messages: [{ role: "user", content: "hi" }] });
+    const reply = await aiProxy.main({ model: "hy3", messages: [{ role: "user", content: "hi" }] }, { request_id: "rid-7" });
     assert.deepEqual(reply.error.code, "AI_CHANNEL_NOT_ALLOWED");
+    assert.deepEqual(reply.error.requestId, "rid-7");
+    assert.doesNotMatch(reply.error.message, /gateway-7/);
+    assert.match(logged[0][1].message, /gateway-7/);
+  } finally {
+    console.error = originalConsoleError;
+    restore();
+  }
+});
+
+test("exports.main still serves the event shape sent by plugin 0.2.4", async () => {
+  const seen = [];
+  const restore = withInjectedCallModel(async (params) => {
+    seen.push(params);
+    return { completion: _internal.buildChatCompletion({ text: "pong", usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 } }, params.model) };
+  });
+  try {
+    // 0.2.4 sends exactly these fields: no tools, toolChoice or maxTokens.
+    const reply = await aiProxy.main({
+      action: "chat",
+      model: "hy4",
+      messages: [
+        { role: "system", content: "be brief" },
+        { role: "user", content: "ping" },
+      ],
+      temperature: 0.7,
+      topP: 0.9,
+    });
+    assert.deepEqual(seen[0], {
+      model: "hy4",
+      messages: [
+        { role: "system", content: "be brief" },
+        { role: "user", content: "ping" },
+      ],
+      temperature: 0.7,
+      topP: 0.9,
+    });
+    assert.deepEqual(reply.choices[0].message, { role: "assistant", content: "pong" });
+    assert.deepEqual(reply.choices[0].finish_reason, "stop");
+    assert.deepEqual(Object.keys(reply).sort(), ["choices", "created", "id", "model", "object", "usage"]);
   } finally {
     restore();
   }
+});
+
+/* ---------------- failureEnvelope ---------------- */
+
+function captureConsoleError(run) {
+  const original = console.error;
+  const calls = [];
+  console.error = (...args) => calls.push(args);
+  try {
+    return { value: run(), calls };
+  } finally {
+    console.error = original;
+  }
+}
+
+test("failureEnvelope hides upstream messages but keeps the code and logs the original", () => {
+  const upstream = Object.assign(new Error("POST https://internal.example/v1 failed for account 100012345: quota 0/1000000"), {
+    code: "EXCEED_TOKEN_QUOTA_LIMIT",
+  });
+  const { value, calls } = captureConsoleError(() => _internal.failureEnvelope(upstream, "rid-9"));
+  assert.deepEqual(value.error.code, "EXCEED_TOKEN_QUOTA_LIMIT");
+  assert.deepEqual(value.error.requestId, "rid-9");
+  assert.doesNotMatch(value.error.message, /internal\.example|100012345|quota 0/);
+  assert.match(value.error.message, /EXCEED_TOKEN_QUOTA_LIMIT/);
+  assert.deepEqual(calls.length, 1);
+  assert.match(calls[0][1].message, /internal\.example/);
+  assert.deepEqual(calls[0][1].requestId, "rid-9");
+
+  const uncoded = captureConsoleError(() => _internal.failureEnvelope(new Error("socket hang up 10.0.0.8"))).value;
+  assert.deepEqual(uncoded.error.code, "UPSTREAM_ERROR");
+  assert.doesNotMatch(uncoded.error.message, /10\.0\.0\.8/);
+});
+
+test("failureEnvelope keeps the text of errors raised by aiProxy itself", () => {
+  const own = Object.assign(new Error("TCB_ENV is not set."), { code: "TCB_ENV_MISSING", expose: true });
+  const { value, calls } = captureConsoleError(() => _internal.failureEnvelope(own, "rid-1"));
+  assert.deepEqual(value.error, { code: "TCB_ENV_MISSING", message: "TCB_ENV is not set.", requestId: "rid-1" });
+  assert.deepEqual(calls.length, 0);
 });
 
 /* ---------------- safeErrorMessage ---------------- */
