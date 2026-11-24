@@ -107,14 +107,20 @@ function modelEntry(spec: ModelSpec): Json {
   };
 }
 
+/** The same structure with every number set to 0. */
+function zeroNumbers(value: unknown): unknown {
+  if (typeof value === "number") return 0;
+  if (!isPlainObject(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, zeroNumbers(item)]));
+}
+
 /**
  * Entry for a model the function's allowlist returned but the host's list
  * (`provider.models`) lacks. Per the Magpie plugin docs that list is in the
- * host model
- * shape (`capabilities.input.image`), not the config-hook shape
- * (`modalities`), so the entry is built from a sibling already in the list.
- * An id outside the catalog is left image-capable: aiProxy forwards what it
- * is sent and CloudBase decides.
+ * host's model shape (`capabilities.input.image`), not the config-hook shape
+ * (`modalities`), so the entry takes its structure from a sibling already in
+ * the list. The sibling's own settings (prices, options, headers, variants)
+ * are not carried over.
  */
 function accountModelEntry(id: string, base: Record<string, Json>): Json {
   const spec = MODEL_CATALOG[id];
@@ -137,6 +143,10 @@ function accountModelEntry(id: string, base: Record<string, Json>): Json {
     },
   };
   if (isPlainObject(template.api)) entry.api = { ...template.api, id };
+  if (isPlainObject(template.cost)) entry.cost = zeroNumbers(template.cost);
+  for (const key of ["options", "headers", "variants"]) {
+    if (isPlainObject(template[key])) entry[key] = {};
+  }
   return entry;
 }
 

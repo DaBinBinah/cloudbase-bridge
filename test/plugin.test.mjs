@@ -682,6 +682,11 @@ test("provider.models: a ping-only model is built in the host's model shape", as
       input: { text: true, image: true, audio: false, video: false, pdf: false },
       output: { text: true, image: false, audio: false, video: false, pdf: false },
     },
+    // Settings the user configured for hy4 only.
+    cost: { input: 3, output: 15, cache: { read: 0.3, write: 0 } },
+    options: { temperature: 0.2 },
+    headers: { "x-team": "a" },
+    variants: { high: {} },
   };
   const gw = mockGateway(async () =>
     new Response(
@@ -700,11 +705,14 @@ test("provider.models: a ping-only model is built in the host's model shape", as
     assert.deepEqual(refined.hy3.capabilities.input, { text: true, image: false, audio: false, video: false, pdf: false });
     assert.equal(refined.hy3.capabilities.toolcall, true);
     assert.equal(refined.hy3.modalities, undefined);
+    assert.deepEqual(refined.hy3.cost, { input: 0, output: 0, cache: { read: 0, write: 0 } });
+    assert.deepEqual([refined.hy3.options, refined.hy3.headers, refined.hy3.variants], [{}, {}, {}]);
     assert.equal(refined["custom-vision"].capabilities.input.image, true);
     assert.equal(refined["custom-vision"].api.id, "custom-vision");
     // The sibling used as a template is not modified.
     assert.equal(hy4.capabilities.input.image, true);
     assert.equal(hy4.api.id, "hy4");
+    assert.equal(hy4.cost.input, 3);
   } finally {
     gw.restore();
   }
