@@ -289,6 +289,14 @@ function buildInvokeEvent(body, model) {
     }
     return event;
 }
+function isJsonObjectText(text) {
+    try {
+        return isPlainObject(JSON.parse(text));
+    }
+    catch {
+        return false;
+    }
+}
 /**
  * Validate the aiProxy reply (an OpenAI Chat Completions object) well enough
  * to adapt it. Returns null when the shape is unusable.
@@ -304,11 +312,16 @@ function normalizeCompletion(value) {
         return null;
     const message = isPlainObject(first.message) ? first.message : null;
     const content = message && typeof message.content === "string" ? message.content : "";
+    const truncated = first.finish_reason === "length";
     const toolCalls = [];
     if (message && Array.isArray(message.tool_calls)) {
         for (const call of message.tool_calls) {
             const fn = isPlainObject(call) && isPlainObject(call.function) ? call.function : null;
             if (!isPlainObject(call) || !fn || typeof fn.name !== "string" || fn.name.length === 0)
+                continue;
+            // A reply cut off at the token limit can end inside a tool call's
+            // arguments; a call the agent cannot parse must not be dispatched.
+            if (truncated && typeof fn.arguments === "string" && !isJsonObjectText(fn.arguments))
                 continue;
             toolCalls.push({
                 id: typeof call.id === "string" && call.id.length > 0 ? call.id : `call_${Date.now().toString(36)}${toolCalls.length}`,
@@ -321,9 +334,7 @@ function normalizeCompletion(value) {
         }
     }
     const reasoningContent = message && typeof message.reasoning_content === "string" ? message.reasoning_content : "";
-    // "length" wins over tool calls: a truncated reply can carry incomplete
-    // tool arguments, and the agent must not treat them as ready to run.
-    const finishReason = first.finish_reason === "length"
+    const finishReason = truncated
         ? "length"
         : toolCalls.length > 0
             ? "tool_calls"

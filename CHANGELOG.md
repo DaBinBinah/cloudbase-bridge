@@ -11,7 +11,8 @@ All notable changes to this project are documented here. The format follows
   to the model on assistant messages. It was dropped in both directions
   before.
 - A reply that ends at the token limit while carrying tool calls now keeps
-  `finish_reason: "length"` instead of being reported as `"tool_calls"`.
+  `finish_reason: "length"` instead of being reported as `"tool_calls"`,
+  and the plugin drops a tool call whose arguments were cut off.
 - aiProxy 1.2.0, from #1 by @ryanuo: `topP: 0` is accepted (the range is
   `[0, 1]`), and failures from the SDK or the model keep their `code` but
   return a generic message; the original message goes to the function log.

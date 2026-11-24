@@ -319,6 +319,32 @@ test("bridge returns reasoning_content and keeps finish_reason length for trunca
   }
 });
 
+test("bridge drops tool calls whose arguments were cut off at the token limit", async () => {
+  const { hooks } = await makePlugin();
+  const completion = aiProxyToolCallCompletion();
+  const cutOff = { id: "call_w2", type: "function", function: { name: "write_file", arguments: '{"path":"ou' } };
+  completion.choices[0].message.tool_calls = [WRITE_FILE_CALL, cutOff];
+  completion.choices[0].finish_reason = "length";
+  const gw = mockGateway(async () => new Response(JSON.stringify(completion), { status: 200 }));
+  try {
+    const doFetch = await loaderFetch(hooks);
+    const payload = await (await doFetch(chatBody({ tools: [WRITE_FILE_TOOL] }))).json();
+    assert.deepEqual(payload.choices[0].message.tool_calls, [WRITE_FILE_CALL], "the complete call is kept");
+    assert.equal(payload.choices[0].finish_reason, "length");
+
+    const streamed = await (await doFetch(chatBody({ stream: true, tools: [WRITE_FILE_TOOL] }))).text();
+    assert.equal(streamed.includes("call_w2"), false);
+    assert.equal(streamed.includes("call_w1"), true);
+
+    completion.choices[0].message.tool_calls = [cutOff];
+    const onlyCutOff = await (await doFetch(chatBody({ tools: [WRITE_FILE_TOOL] }))).json();
+    assert.deepEqual(onlyCutOff.choices[0].message, { role: "assistant", content: "" });
+    assert.equal(onlyCutOff.choices[0].finish_reason, "length");
+  } finally {
+    gw.restore();
+  }
+});
+
 test("bridge leaves reasoning_content out when the model sends none", async () => {
   const { hooks } = await makePlugin();
   const gw = mockGateway(async () => new Response(JSON.stringify(aiProxyCompletion("plain")), { status: 200 }));
