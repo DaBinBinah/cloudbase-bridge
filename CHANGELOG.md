@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [SemVer](https://semver.org/).
 
+## [0.2.5] - 2026-11-24
+
+- Tool calling: the plugin now forwards `tools`, `tool_choice` and
+  `max_tokens` / `max_completion_tokens` to aiProxy instead of dropping
+  them, and returns the model's `tool_calls` (JSON and synthesized SSE,
+  `finish_reason: "tool_calls"`). The catalog declares `tool_call: true`.
+- aiProxy 1.1.0: accepts `tools`, `toolChoice`, `maxTokens`, `tool`
+  messages and assistant `tool_calls`; calls `generateText` with
+  `maxSteps: 1` so the model's tool calls go back to the agent; keeps the
+  upstream `finish_reason` (e.g. `length`). **Redeploy the function**
+  (`tcb fn deploy aiProxy --force`) — aiProxy 1.0.0 ignores `tools` and
+  rejects tool messages.
+- `scripts/check-plugin.mjs`: the config-hook check is awaited and no
+  longer expects `hy4` to be disabled.
+
 ## [0.2.4] - 2026-11-23
 
 - Model refresh (2026-11-23, from my environment's current list): add

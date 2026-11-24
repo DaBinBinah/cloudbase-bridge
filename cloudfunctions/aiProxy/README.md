@@ -33,13 +33,23 @@ automatically.
     { "role": "user", "content": "Hello" }
   ],
   "temperature": 0.7,          // optional, 0..2
-  "topP": 0.9                  // optional, (0, 1]
+  "topP": 0.9,                 // optional, (0, 1]
+  "maxTokens": 1024,           // optional, positive integer
+  "tools": [                   // optional, OpenAI function tools
+    { "type": "function", "function": { "name": "read_file", "description": "...", "parameters": { "type": "object" } } }
+  ],
+  "toolChoice": "auto"         // optional: "auto" | "none" | "required" | { type: "function", function: { name } }
 }
 ```
 
-Text-only: image parts and tool-call messages are rejected with a diagnostic
-error (`IMAGE_INPUT_NOT_SUPPORTED` / `INVALID_REQUEST`) because the
-documented `generateText` input carries plain string content.
+Messages may also use the `tool` role (with `tool_call_id`) and assistant
+messages may carry `tool_calls`, so an agent can send tool results back.
+The function never runs a tool itself: it asks the model for one step and
+returns the model's `tool_calls` (with `finish_reason: "tool_calls"`) to
+the caller.
+
+Image parts are rejected with `IMAGE_INPUT_NOT_SUPPORTED` because the
+`generateText` input carries plain string content.
 
 ## What it returns
 

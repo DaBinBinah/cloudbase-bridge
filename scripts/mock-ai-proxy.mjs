@@ -74,7 +74,7 @@ const server = createServer((req, res) => {
         JSON.stringify({
           ok: true,
           service: "aiProxy",
-          version: "1.0.0",
+          version: "1.1.0",
           env: "mock-env",
           models: ["hy3", "hy4", "hy4-preview", "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"],
         }),
@@ -90,8 +90,22 @@ const server = createServer((req, res) => {
       );
       return;
     }
+    const completion = COMPLETION(event.model);
+    const lastMessage = event.messages[event.messages.length - 1];
+    if (Array.isArray(event.tools) && event.tools.length > 0 && lastMessage?.role !== "tool") {
+      // Ask for the first tool once; reply with text after its result.
+      completion.choices[0] = {
+        index: 0,
+        message: {
+          role: "assistant",
+          content: null,
+          tool_calls: [{ id: "call_mock001", type: "function", function: { name: event.tools[0].function?.name ?? "tool", arguments: "{}" } }],
+        },
+        finish_reason: "tool_calls",
+      };
+    }
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify(COMPLETION(event.model)));
+    res.end(JSON.stringify(completion));
   });
 });
 
