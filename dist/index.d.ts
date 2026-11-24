@@ -30,7 +30,7 @@
  * - `dist/` must be committed so the GitHub-topic discovery path can load
  *   the plugin straight from the repository.
  */
-export declare const PLUGIN_VERSION: "0.2.4";
+export declare const PLUGIN_VERSION: "0.2.5";
 /**
  * Model catalog (text chat models).
  *
@@ -101,6 +101,18 @@ interface ChatCompletionsBody {
     stream?: unknown;
     temperature?: unknown;
     top_p?: unknown;
+    max_tokens?: unknown;
+    max_completion_tokens?: unknown;
+    tools?: unknown;
+    tool_choice?: unknown;
+}
+interface ToolCall {
+    id: string;
+    type: "function";
+    function: {
+        name: string;
+        arguments: string;
+    };
 }
 /**
  * Strip a provider prefix (`cloudbase/`, `cloudbase-plugin/`) from a model
@@ -151,6 +163,7 @@ interface NormalizedCompletion {
     created: number;
     model: string;
     content: string;
+    toolCalls: ToolCall[];
     finishReason: string;
     usage: {
         prompt_tokens: number;
@@ -217,7 +230,7 @@ export declare const CloudbaseBridge: (input?: PluginInput, options?: PluginOpti
     };
 }>;
 export declare const _internal: {
-    PLUGIN_VERSION: "0.2.4";
+    PLUGIN_VERSION: "0.2.5";
     PROVIDER_ID: string;
     DEFAULT_FUNCTION_NAME: string;
     DEFAULT_TIMEOUT_MS: number;

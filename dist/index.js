@@ -34,7 +34,7 @@
  * Version & constants (single source of truth; no imports allowed —  *
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
-export const PLUGIN_VERSION = "0.2.4";
+export const PLUGIN_VERSION = "0.2.5";
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
 const PROVIDER_ID = "cloudbase";
@@ -277,9 +277,16 @@ function buildInvokeEvent(body, model) {
     if (typeof body.top_p === "number" && Number.isFinite(body.top_p)) {
         event.topP = body.top_p;
     }
-    // NOTE: `max_tokens` and `tools` are intentionally not forwarded: the
-    // documented @cloudbase/node-sdk generateText input carries
-    // { model, messages, temperature?, topP? } only (see README limitations).
+    const maxTokens = typeof body.max_completion_tokens === "number" ? body.max_completion_tokens : body.max_tokens;
+    if (typeof maxTokens === "number" && Number.isInteger(maxTokens) && maxTokens > 0) {
+        event.maxTokens = maxTokens;
+    }
+    if (Array.isArray(body.tools) && body.tools.length > 0) {
+        event.tools = body.tools;
+        if (body.tool_choice !== undefined && body.tool_choice !== null) {
+            event.toolChoice = body.tool_choice;
+        }
+    }
     return event;
 }
 /**
@@ -297,7 +304,23 @@ function normalizeCompletion(value) {
         return null;
     const message = isPlainObject(first.message) ? first.message : null;
     const content = message && typeof message.content === "string" ? message.content : "";
-    const finishReason = typeof first.finish_reason === "string" ? first.finish_reason : "stop";
+    const toolCalls = [];
+    if (message && Array.isArray(message.tool_calls)) {
+        for (const call of message.tool_calls) {
+            const fn = isPlainObject(call) && isPlainObject(call.function) ? call.function : null;
+            if (!isPlainObject(call) || !fn || typeof fn.name !== "string" || fn.name.length === 0)
+                continue;
+            toolCalls.push({
+                id: typeof call.id === "string" && call.id.length > 0 ? call.id : `call_${Date.now().toString(36)}${toolCalls.length}`,
+                type: "function",
+                function: {
+                    name: fn.name,
+                    arguments: typeof fn.arguments === "string" ? fn.arguments : JSON.stringify(fn.arguments ?? {}),
+                },
+            });
+        }
+    }
+    const finishReason = toolCalls.length > 0 ? "tool_calls" : typeof first.finish_reason === "string" ? first.finish_reason : "stop";
     const usage = isPlainObject(value.usage)
         ? {
             prompt_tokens: typeof value.usage.prompt_tokens === "number" ? value.usage.prompt_tokens : 0,
@@ -310,6 +333,7 @@ function normalizeCompletion(value) {
         created: typeof value.created === "number" ? value.created : Math.floor(Date.now() / 1000),
         model: typeof value.model === "string" ? value.model : "",
         content,
+        toolCalls,
         finishReason,
         usage,
     };
@@ -351,6 +375,9 @@ function sseResponse(completion, echoModel) {
                 for (const piece of chunkText(completion.content, SSE_CHUNK_CHARS)) {
                     send(chunkFrame(base, { content: piece }, null));
                 }
+                completion.toolCalls.forEach((call, index) => {
+                    send(chunkFrame(base, { tool_calls: [{ index, ...call }] }, null));
+                });
                 send(chunkFrame(base, {}, completion.finishReason || "stop", completion.usage ? { ...completion.usage } : undefined));
                 controller.enqueue(encoder.encode("data: [DONE]\n\n"));
                 controller.close();
@@ -385,7 +412,9 @@ function jsonCompletionResponse(completion, echoModel) {
         choices: [
             {
                 index: 0,
-                message: { role: "assistant", content: completion.content },
+                message: completion.toolCalls.length > 0
+                    ? { role: "assistant", content: completion.content || null, tool_calls: completion.toolCalls }
+                    : { role: "assistant", content: completion.content },
                 finish_reason: completion.finishReason || "stop",
             },
         ],
@@ -599,7 +628,7 @@ export const CloudbaseBridge = async (input = {}, options = {}) => {
                     {
                         name: spec.name,
                         limit: { context: spec.context, output: spec.output },
-                        tool_call: false,
+                        tool_call: true,
                         ...(spec.verified ? {} : { disabled: true }),
                     },
                 ])),
@@ -689,7 +718,7 @@ export const CloudbaseBridge = async (input = {}, options = {}) => {
                             : {
                                 name: known?.name ?? id,
                                 limit: { context: known?.context ?? 131_072, output: known?.output ?? 16_384 },
-                                tool_call: false,
+                                tool_call: true,
                             };
                         // The deployed function's allowlist explicitly accepts this id
                         // (it just said so in the ping), so a static placeholder

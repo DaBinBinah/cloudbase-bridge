@@ -126,7 +126,7 @@ test("config hook declares provider with catalog; ??= preserves user config", as
   assert.ok(!models["deepseek-v4.1-flash-1017"].disabled, "verified 1017 must be enabled by default");
   assert.ok(!models["hy3"].disabled && !models["hy4-preview"].disabled && !models["deepseek-v4.1-flash"].disabled);
   assert.equal(models["deepseek-v4.1-flash-1017"].name, "DeepSeek V4.1 Flash 1017");
-  assert.equal(models["hy3"].tool_call, false);
+  assert.equal(models["hy3"].tool_call, true);
 
   // Second run must not overwrite user config.
   const userCfg = { provider: { cloudbase: { name: "Mine", models: { custom: {} } } } };
@@ -207,6 +207,73 @@ test("bridge non-streaming: adapts aiProxy JSON, echoes requested model id, send
     assert.equal(payload.model, "cloudbase/hy3", "response must echo the requested model id");
     assert.equal(payload.choices[0].message.content, "hello from hy3");
     assert.deepEqual(payload.usage.total_tokens, 14);
+  } finally {
+    gw.restore();
+  }
+});
+
+const WRITE_FILE_TOOL = {
+  type: "function",
+  function: { name: "write_file", description: "Write a file", parameters: { type: "object", properties: { path: { type: "string" } } } },
+};
+const WRITE_FILE_CALL = { id: "call_w1", type: "function", function: { name: "write_file", arguments: '{"path":"out.txt"}' } };
+
+function aiProxyToolCallCompletion() {
+  const completion = aiProxyCompletion("");
+  completion.choices[0] = {
+    index: 0,
+    message: { role: "assistant", content: null, tool_calls: [WRITE_FILE_CALL] },
+    finish_reason: "tool_calls",
+  };
+  return completion;
+}
+
+test("bridge forwards tools, tool_choice and max_tokens and returns the model's tool calls", async () => {
+  const { hooks } = await makePlugin();
+  const gw = mockGateway(async () => new Response(JSON.stringify(aiProxyToolCallCompletion()), { status: 200 }));
+  try {
+    const doFetch = await loaderFetch(hooks);
+    const messages = [
+      { role: "user", content: "write out.txt" },
+      { role: "assistant", content: null, tool_calls: [WRITE_FILE_CALL] },
+      { role: "tool", tool_call_id: "call_w1", content: "ok" },
+    ];
+    const res = await doFetch(chatBody({ messages, tools: [WRITE_FILE_TOOL], tool_choice: "auto", max_tokens: 64 }));
+    assert.equal(res.status, 200);
+
+    const sentEvent = JSON.parse(gw.calls[0].init.body);
+    assert.deepEqual(sentEvent.tools, [WRITE_FILE_TOOL]);
+    assert.equal(sentEvent.toolChoice, "auto");
+    assert.equal(sentEvent.maxTokens, 64);
+    assert.deepEqual(sentEvent.messages, messages);
+
+    const payload = await res.json();
+    assert.deepEqual(payload.choices[0].message, { role: "assistant", content: null, tool_calls: [WRITE_FILE_CALL] });
+    assert.equal(payload.choices[0].finish_reason, "tool_calls");
+
+    await doFetch(chatBody({ max_completion_tokens: 32, tool_choice: "auto" }));
+    const plainEvent = JSON.parse(gw.calls[1].init.body);
+    assert.equal(plainEvent.maxTokens, 32);
+    assert.equal("tools" in plainEvent, false);
+    assert.equal("toolChoice" in plainEvent, false, "tool_choice without tools is not forwarded");
+  } finally {
+    gw.restore();
+  }
+});
+
+test("bridge streaming: tool calls are emitted as indexed tool_calls deltas", async () => {
+  const { hooks } = await makePlugin();
+  const gw = mockGateway(async () => new Response(JSON.stringify(aiProxyToolCallCompletion()), { status: 200 }));
+  try {
+    const doFetch = await loaderFetch(hooks);
+    const res = await doFetch(chatBody({ stream: true, tools: [WRITE_FILE_TOOL] }));
+    const chunks = (await res.text())
+      .split("\n\n")
+      .filter((line) => line.startsWith("data: ") && line !== "data: [DONE]")
+      .map((line) => JSON.parse(line.slice("data: ".length)));
+    const toolDeltas = chunks.flatMap((c) => c.choices[0].delta.tool_calls ?? []);
+    assert.deepEqual(toolDeltas, [{ index: 0, ...WRITE_FILE_CALL }]);
+    assert.equal(chunks[chunks.length - 1].choices[0].finish_reason, "tool_calls");
   } finally {
     gw.restore();
   }

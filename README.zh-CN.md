@@ -105,7 +105,8 @@ m plugin options cloudbase-bridge '{"gatewayBaseUrl":"http://127.0.0.1:8787"}'
 ## 已知限制
 
 - 没有真流式：上游是一次性返回，SSE 在本地合成，所以首 token 要等整段生成完；
-- 不支持工具调用和图片输入，`max_tokens` 也会被忽略（SDK 通道只接受 `{ model, messages, temperature, topP }`）；
+- 工具调用需要 aiProxy 1.1.0 及以上——插件从 0.2.4 或更早版本升级后，要重新部署一次云函数（`tcb fn deploy aiProxy --force`）；
+- 不支持图片输入；
 - 特别长的输出可能撞上云函数 120 秒超时；
 - 没有额度展示（官方没给查询 API）；赠送额度本身有期限（6 个月）。
 

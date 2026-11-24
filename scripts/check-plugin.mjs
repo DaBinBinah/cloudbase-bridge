@@ -65,7 +65,7 @@ function startMockGateway() {
           JSON.stringify({
             ok: true,
             service: "aiProxy",
-            version: "1.0.0",
+            version: "1.1.0",
             env: "env-mock",
             models: ["hy4-flash", "hy3", "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"],
           }),
@@ -111,7 +111,7 @@ const input = {
 const hooks = await CloudbaseBridge(input, {});
 console.log("check-plugin: hooks created");
 
-ok("config hook declares the cloudbase provider with the model catalog", async () => {
+await okAsync("config hook declares the cloudbase provider with the model catalog", async () => {
   const cfg = {};
   await hooks.config(cfg);
   const provider = cfg.provider?.cloudbase;
@@ -120,7 +120,8 @@ ok("config hook declares the cloudbase provider with the model catalog", async (
   for (const id of ["hy3", "hy4-preview", "deepseek-v4.1-flash", "hy4", "deepseek-v4.1-flash-1017"]) {
     assert.ok(provider.models[id], `model ${id} missing`);
   }
-  assert.equal(provider.models.hy4.disabled, true);
+  assert.ok(!provider.models.hy4.disabled);
+  assert.equal(provider.models.hy4.tool_call, true);
 });
 
 ok("auth hook shape: provider id, api method, prompts", () => {

@@ -9,14 +9,19 @@
  * Event contract (sent by the plugin as the invocation body):
  *   { action?: "chat" | "ping",       // default "chat"
  *     model: string,                  // e.g. "hy3"
- *     messages: [{ role, content }],  // roles: system | user | assistant
+ *     messages: [{ role, content }],  // roles: system | user | assistant | tool
+ *                                     // (assistant may carry tool_calls,
+ *                                     //  tool carries tool_call_id)
  *     temperature?: number,           // 0..2
- *     topP?: number }                 // 0..1
+ *     topP?: number,                  // 0..1
+ *     maxTokens?: number,             // positive integer
+ *     tools?: [{ type: "function", function: { name, description?, parameters? } }],
+ *     toolChoice?: "auto" | "none" | "required" | { type: "function", function: { name } } }
  *
  * Reply on success (HTTP 200 body = this return value, per the functions
  * OpenAPI — there is no wrapper envelope):
  *   { id, object: "chat.completion", created, model,
- *     choices: [{ index, message: { role, content }, finish_reason }],
+ *     choices: [{ index, message: { role, content, tool_calls? }, finish_reason }],
  *     usage: { prompt_tokens, completion_tokens, total_tokens } }
  *
  * Reply on failure:
@@ -59,7 +64,10 @@ const MAX_MESSAGES = 128;
 const MAX_SINGLE_MESSAGE_CHARS = 200_000;
 const MAX_TOTAL_MESSAGE_CHARS = 400_000;
 const MAX_MODEL_ID_LENGTH = 64;
-const AI_PROXY_VERSION = "1.0.0";
+const MAX_TOOLS = 128;
+const MAX_TOOL_CALLS_PER_MESSAGE = 64;
+const MAX_TOOL_NAME_LENGTH = 128;
+const AI_PROXY_VERSION = "1.1.0";
 
 /** Group name for the managed model pool — required by the official
  * growth-plan notice ("createModel 的参数改为 cloudbase"). The concrete
@@ -117,35 +125,17 @@ function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const ALLOWED_ROLES = new Set(["system", "user", "assistant"]);
+const ALLOWED_ROLES = new Set(["system", "user", "assistant", "tool"]);
 
 /**
- * Normalize one OpenAI-style message to the documented generateText input
- * shape { role, content: string }. Text array parts are concatenated;
- * anything else (images, tool calls, unknown roles) is rejected with a
- * diagnostic error code.
+ * Reduce OpenAI message content to a string. Text array parts are
+ * concatenated; anything else (images, files) is rejected. `allowEmpty`
+ * accepts null/undefined (assistant messages that only carry tool_calls).
+ * Returns { content } or { error }.
  */
-function normalizeMessage(message, index) {
-  if (!isPlainObject(message)) {
-    return errorEnvelope("INVALID_REQUEST", `messages[${index}] must be an object.`);
-  }
-  const role = typeof message.role === "string" ? message.role : "";
-  if (!ALLOWED_ROLES.has(role)) {
-    return errorEnvelope(
-        "INVALID_REQUEST",
-        `messages[${index}].role "${role.slice(0, 24)}" is not supported. Supported roles: system, user, assistant (tool calls are not supported by this proxy yet).`,
-      );
-  }
-  const content = message.content;
-  if (typeof content === "string") {
-    if (content.length > MAX_SINGLE_MESSAGE_CHARS) {
-      return errorEnvelope(
-          "INVALID_REQUEST",
-          `messages[${index}] is too large (${content.length} chars; limit ${MAX_SINGLE_MESSAGE_CHARS}).`,
-        );
-    }
-    return { message: { role, content } };
-  }
+function normalizeContent(content, index, allowEmpty) {
+  if (typeof content === "string") return { content };
+  if ((content === null || content === undefined) && allowEmpty) return { content: "" };
   if (Array.isArray(content)) {
     // OpenAI multimodal array: keep text parts, refuse images/files.
     const textParts = [];
@@ -161,18 +151,135 @@ function normalizeMessage(message, index) {
           `messages[${index}].content[${partIndex}] has type "${partType.slice(0, 24)}". This proxy supports text only (the Node SDK channel used here documents string content; image input is not forwarded).`,
         );
     }
-    const joined = textParts.join("\n");
-    if (joined.length > MAX_SINGLE_MESSAGE_CHARS) {
-      return errorEnvelope(
-          "INVALID_REQUEST",
-          `messages[${index}] is too large (${joined.length} chars; limit ${MAX_SINGLE_MESSAGE_CHARS}).`,
-        );
-    }
-    return { message: { role, content: joined } };
+    return { content: textParts.join("\n") };
   }
   return errorEnvelope(
       "INVALID_REQUEST",
       `messages[${index}].content must be a string or an array of text parts.`,
+    );
+}
+
+/**
+ * Validate the `tool_calls` of an assistant message and keep only the
+ * OpenAI fields ({ id, type: "function", function: { name, arguments } }).
+ * Returns { toolCalls, chars } or { error }.
+ */
+function normalizeToolCalls(toolCalls, index) {
+  if (!Array.isArray(toolCalls) || toolCalls.length > MAX_TOOL_CALLS_PER_MESSAGE) {
+    return errorEnvelope(
+        "INVALID_REQUEST",
+        `messages[${index}].tool_calls must be an array of at most ${MAX_TOOL_CALLS_PER_MESSAGE} items.`,
+      );
+  }
+  const out = [];
+  let chars = 0;
+  for (let callIndex = 0; callIndex < toolCalls.length; callIndex += 1) {
+    const call = toolCalls[callIndex];
+    const fn = isPlainObject(call) && isPlainObject(call.function) ? call.function : null;
+    if (
+      !fn ||
+      typeof call.id !== "string" || call.id.length === 0 ||
+      typeof fn.name !== "string" || fn.name.length === 0 || fn.name.length > MAX_TOOL_NAME_LENGTH
+    ) {
+      return errorEnvelope(
+          "INVALID_REQUEST",
+          `messages[${index}].tool_calls[${callIndex}] must look like { id, type: "function", function: { name, arguments } }.`,
+        );
+    }
+    const args = typeof fn.arguments === "string" ? fn.arguments : JSON.stringify(fn.arguments ?? {});
+    chars += fn.name.length + args.length;
+    out.push({ id: call.id, type: "function", function: { name: fn.name, arguments: args } });
+  }
+  return { toolCalls: out, chars };
+}
+
+/**
+ * Normalize one OpenAI-style message to the generateText input shape:
+ * { role, content: string } plus `tool_calls` on assistant messages and
+ * `tool_call_id` on tool messages. Images and unknown roles are rejected
+ * with a diagnostic error code. Returns { message, chars } or { error }.
+ */
+function normalizeMessage(message, index) {
+  if (!isPlainObject(message)) {
+    return errorEnvelope("INVALID_REQUEST", `messages[${index}] must be an object.`);
+  }
+  const role = typeof message.role === "string" ? message.role : "";
+  if (!ALLOWED_ROLES.has(role)) {
+    return errorEnvelope(
+        "INVALID_REQUEST",
+        `messages[${index}].role "${role.slice(0, 24)}" is not supported. Supported roles: system, user, assistant, tool.`,
+      );
+  }
+  const hasToolCalls = role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0;
+  const normalizedContent = normalizeContent(message.content, index, hasToolCalls);
+  if (normalizedContent.error) return { error: normalizedContent.error };
+  const content = normalizedContent.content;
+  const normalized = { role, content };
+  let chars = content.length;
+
+  if (hasToolCalls) {
+    const calls = normalizeToolCalls(message.tool_calls, index);
+    if (calls.error) return { error: calls.error };
+    normalized.tool_calls = calls.toolCalls;
+    chars += calls.chars;
+  }
+  if (role === "tool") {
+    if (typeof message.tool_call_id !== "string" || message.tool_call_id.length === 0) {
+      return errorEnvelope("INVALID_REQUEST", `messages[${index}] (role "tool") needs a tool_call_id.`);
+    }
+    normalized.tool_call_id = message.tool_call_id;
+  }
+  if (chars > MAX_SINGLE_MESSAGE_CHARS) {
+    return errorEnvelope(
+        "INVALID_REQUEST",
+        `messages[${index}] is too large (${chars} chars; limit ${MAX_SINGLE_MESSAGE_CHARS}).`,
+      );
+  }
+  return { message: normalized, chars };
+}
+
+/**
+ * Validate OpenAI `tools` (function tools only) and keep the documented
+ * fields. Returns { tools } or { error }.
+ */
+function normalizeTools(tools) {
+  if (!Array.isArray(tools) || tools.length > MAX_TOOLS) {
+    return errorEnvelope("INVALID_REQUEST", `event.tools must be an array of at most ${MAX_TOOLS} function tools.`);
+  }
+  const out = [];
+  for (let index = 0; index < tools.length; index += 1) {
+    const tool = tools[index];
+    const fn = isPlainObject(tool) && tool.type === "function" && isPlainObject(tool.function) ? tool.function : null;
+    if (!fn || typeof fn.name !== "string" || fn.name.length === 0 || fn.name.length > MAX_TOOL_NAME_LENGTH) {
+      return errorEnvelope(
+          "INVALID_REQUEST",
+          `event.tools[${index}] must look like { type: "function", function: { name, description?, parameters? } }.`,
+        );
+    }
+    out.push({
+      type: "function",
+      function: {
+        name: fn.name,
+        description: typeof fn.description === "string" ? fn.description : "",
+        parameters: isPlainObject(fn.parameters) ? fn.parameters : { type: "object", properties: {} },
+      },
+    });
+  }
+  return { tools: out };
+}
+
+/** Returns { toolChoice } or { error }. */
+function normalizeToolChoice(toolChoice) {
+  if (toolChoice === "auto" || toolChoice === "none" || toolChoice === "required") return { toolChoice };
+  if (
+    isPlainObject(toolChoice) && toolChoice.type === "function" &&
+    isPlainObject(toolChoice.function) && typeof toolChoice.function.name === "string" && toolChoice.function.name.length > 0
+  ) {
+    return { toolChoice: { type: "function", function: { name: toolChoice.function.name } } };
+  }
+  return errorEnvelope(
+      "INVALID_REQUEST",
+      'event.toolChoice must be "auto", "none", "required" or { type: "function", function: { name } }.',
     );
 }
 
@@ -201,7 +308,7 @@ function validateChatEvent(event) {
     const result = normalizeMessage(event.messages[index], index);
     if (result.error) return { error: result.error };
     const normalized = result.message;
-    totalChars += normalized.content.length;
+    totalChars += result.chars;
     if (totalChars > MAX_TOTAL_MESSAGE_CHARS) {
       return errorEnvelope(
           "INVALID_REQUEST",
@@ -223,6 +330,22 @@ function validateChatEvent(event) {
       return errorEnvelope("INVALID_REQUEST", "event.topP must be in (0, 1].");
     }
     params.topP = event.topP;
+  }
+  if (event.maxTokens !== undefined && event.maxTokens !== null) {
+    if (!Number.isInteger(event.maxTokens) || event.maxTokens < 1) {
+      return errorEnvelope("INVALID_REQUEST", "event.maxTokens must be a positive integer.");
+    }
+    params.maxTokens = event.maxTokens;
+  }
+  if (Array.isArray(event.tools) && event.tools.length > 0) {
+    const tools = normalizeTools(event.tools);
+    if (tools.error) return { error: tools.error };
+    params.tools = tools.tools;
+    if (event.toolChoice !== undefined && event.toolChoice !== null) {
+      const choice = normalizeToolChoice(event.toolChoice);
+      if (choice.error) return { error: choice.error };
+      params.toolChoice = choice.toolChoice;
+    }
   }
 
   const allowList = allowedModels();
@@ -255,12 +378,54 @@ function normalizeUsage(usage) {
 }
 
 /**
- * Map the documented @cloudbase/node-sdk generateText result
- * ({ text, messages, usage, rawResponses, error? }) to an OpenAI Chat
- * Completions object. Pure; unit-tested via _internal.
+ * The assistant message of the model's last reply. generateText keeps the
+ * upstream Chat Completions object in `rawResponses`; older SDKs only
+ * expose it as the message appended to `messages`.
  */
-function buildChatCompletion(result, model, requestId) {
+function pickLastChoice(result, inputMessageCount) {
+  const raw = result && Array.isArray(result.rawResponses) ? result.rawResponses[result.rawResponses.length - 1] : null;
+  const choice = isPlainObject(raw) && Array.isArray(raw.choices) ? raw.choices[0] : null;
+  if (isPlainObject(choice) && isPlainObject(choice.message)) {
+    return { message: choice.message, finishReason: choice.finish_reason };
+  }
+  const messages = result && Array.isArray(result.messages) ? result.messages : [];
+  const last = messages[messages.length - 1];
+  if (typeof inputMessageCount === "number" && messages.length > inputMessageCount && isPlainObject(last) && last.role === "assistant") {
+    return { message: last, finishReason: undefined };
+  }
+  return { message: null, finishReason: undefined };
+}
+
+function pickToolCalls(message) {
+  if (!isPlainObject(message) || !Array.isArray(message.tool_calls)) return [];
+  const out = [];
+  for (const call of message.tool_calls) {
+    const fn = isPlainObject(call) && isPlainObject(call.function) ? call.function : null;
+    if (!fn || typeof fn.name !== "string" || fn.name.length === 0) continue;
+    out.push({
+      id: typeof call.id === "string" && call.id.length > 0 ? call.id : "call_" + Math.random().toString(36).slice(2, 14),
+      type: "function",
+      function: {
+        name: fn.name,
+        arguments: typeof fn.arguments === "string" ? fn.arguments : JSON.stringify(fn.arguments ?? {}),
+      },
+    });
+  }
+  return out;
+}
+
+/**
+ * Map the @cloudbase/node-sdk generateText result
+ * ({ text, messages, usage, rawResponses, error? }) to an OpenAI Chat
+ * Completions object, including the model's tool calls. Pure; unit-tested
+ * via _internal.
+ */
+function buildChatCompletion(result, model, requestId, inputMessageCount) {
   const text = result && typeof result.text === "string" ? result.text : "";
+  const { message: lastMessage, finishReason } = pickLastChoice(result, inputMessageCount);
+  const toolCalls = pickToolCalls(lastMessage);
+  const message = { role: "assistant", content: toolCalls.length > 0 && text.length === 0 ? null : text };
+  if (toolCalls.length > 0) message.tool_calls = toolCalls;
   return {
     id: newCompletionId(),
     object: "chat.completion",
@@ -269,8 +434,13 @@ function buildChatCompletion(result, model, requestId) {
     choices: [
       {
         index: 0,
-        message: { role: "assistant", content: text },
-        finish_reason: "stop",
+        message,
+        finish_reason:
+          toolCalls.length > 0
+            ? "tool_calls"
+            : typeof finishReason === "string" && finishReason.length > 0 && finishReason !== "tool_calls"
+              ? finishReason
+              : "stop",
       },
     ],
     usage: normalizeUsage(result && result.usage),
@@ -295,6 +465,30 @@ function pingResult() {
 
 let sdkModule = null;
 let app = null;
+/**
+ * Map validated params to the generateText input. The SDK posts every
+ * field it does not consume itself to the model's chat/completions
+ * endpoint (topP -> top_p, toolChoice -> tool_choice). Pure; unit-tested.
+ */
+function buildGenerateInput(params) {
+  return {
+    model: params.model,
+    messages: params.messages,
+    ...(typeof params.temperature === "number" ? { temperature: params.temperature } : {}),
+    ...(typeof params.topP === "number" ? { topP: params.topP } : {}),
+    ...(typeof params.maxTokens === "number" ? { max_tokens: params.maxTokens } : {}),
+    ...(params.tools
+      ? {
+          tools: params.tools,
+          ...(params.toolChoice ? { toolChoice: params.toolChoice } : {}),
+          // The SDK would otherwise try to run the tools itself; one step
+          // hands the model's tool calls back to the agent, which owns them.
+          maxSteps: 1,
+        }
+      : {}),
+  };
+}
+
 let chatModel = null;
 
 function loadSdk() {
@@ -342,17 +536,12 @@ async function callModel(params, requestId) {
     return exports._callModelOverride(params, requestId);
   }
   try {
-    const result = await getChatModel().generateText({
-      model: params.model,
-      messages: params.messages,
-      ...(typeof params.temperature === "number" ? { temperature: params.temperature } : {}),
-      ...(typeof params.topP === "number" ? { topP: params.topP } : {}),
-    });
+    const result = await getChatModel().generateText(buildGenerateInput(params));
     if (result && result.error) {
       const code = pickUpstreamCode(result.error) || "UPSTREAM_ERROR";
       return errorEnvelope(code, safeErrorMessage(result.error), requestId);
     }
-    return { completion: buildChatCompletion(result, params.model, requestId) };
+    return { completion: buildChatCompletion(result, params.model, requestId, params.messages.length) };
   } catch (err) {
     const code = pickUpstreamCode(err);
     if (code) {
@@ -407,6 +596,9 @@ exports._internal = {
   allowedModels,
   validateChatEvent,
   normalizeMessage,
+  normalizeTools,
+  normalizeToolChoice,
+  buildGenerateInput,
   buildChatCompletion,
   normalizeUsage,
   errorEnvelope,

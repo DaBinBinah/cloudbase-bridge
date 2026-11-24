@@ -43,13 +43,103 @@ test("validateChatEvent rejects missing/invalid model", () => {
   }
 });
 
-test("validateChatEvent rejects unknown roles and tool shapes", () => {
-  const result = _internal.validateChatEvent({
+test("validateChatEvent rejects unknown roles and malformed tool messages", () => {
+  const unknownRole = _internal.validateChatEvent({
+    model: "hy3",
+    messages: [{ role: "function", content: "{}" }],
+  });
+  assert.deepEqual(unknownRole.error.code, "INVALID_REQUEST");
+  assert.match(unknownRole.error.message, /is not supported/);
+
+  const noCallId = _internal.validateChatEvent({
     model: "hy3",
     messages: [{ role: "tool", content: "{}" }],
   });
-  assert.deepEqual(result.error.code, "INVALID_REQUEST");
-  assert.match(result.error.message, /tool calls are not supported/);
+  assert.deepEqual(noCallId.error.code, "INVALID_REQUEST");
+  assert.match(noCallId.error.message, /tool_call_id/);
+
+  const badCall = _internal.validateChatEvent({
+    model: "hy3",
+    messages: [{ role: "assistant", content: null, tool_calls: [{ id: "call_1", function: {} }] }],
+  });
+  assert.deepEqual(badCall.error.code, "INVALID_REQUEST");
+});
+
+const READ_FILE_TOOL = {
+  type: "function",
+  function: {
+    name: "read_file",
+    description: "Read a file",
+    parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+  },
+};
+
+test("validateChatEvent keeps tools, toolChoice, maxTokens and a tool-call round trip", () => {
+  const result = _internal.validateChatEvent({
+    model: "hy4",
+    messages: [
+      { role: "user", content: "read note.txt" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{ id: "call_1", type: "function", function: { name: "read_file", arguments: '{"path":"note.txt"}' }, extra: 1 }],
+      },
+      { role: "tool", tool_call_id: "call_1", content: [{ type: "text", text: "hello" }] },
+    ],
+    tools: [READ_FILE_TOOL],
+    toolChoice: "required",
+    maxTokens: 64,
+  });
+  assert(!result.error, JSON.stringify(result.error));
+  assert.deepEqual(result.params.messages, [
+    { role: "user", content: "read note.txt" },
+    {
+      role: "assistant",
+      content: "",
+      tool_calls: [{ id: "call_1", type: "function", function: { name: "read_file", arguments: '{"path":"note.txt"}' } }],
+    },
+    { role: "tool", content: "hello", tool_call_id: "call_1" },
+  ]);
+  assert.deepEqual(result.params.tools, [READ_FILE_TOOL]);
+  assert.deepEqual(result.params.toolChoice, "required");
+  assert.deepEqual(result.params.maxTokens, 64);
+});
+
+test("validateChatEvent rejects malformed tools, toolChoice and maxTokens", () => {
+  const base = { model: "hy3", messages: [{ role: "user", content: "hi" }] };
+  for (const extra of [
+    { tools: [{ type: "function" }] },
+    { tools: [{ type: "web_search", function: { name: "x" } }] },
+    { tools: [READ_FILE_TOOL], toolChoice: "sometimes" },
+    { maxTokens: 0 },
+    { maxTokens: 1.5 },
+    { maxTokens: "64" },
+  ]) {
+    const result = _internal.validateChatEvent({ ...base, ...extra });
+    assert(result.error, `expected rejection for ${JSON.stringify(extra)}`);
+    assert.deepEqual(result.error.code, "INVALID_REQUEST");
+  }
+  // toolChoice without tools is dropped rather than sent upstream.
+  const noTools = _internal.validateChatEvent({ ...base, toolChoice: "auto" });
+  assert(!noTools.error);
+  assert.equal("toolChoice" in noTools.params, false);
+});
+
+test("buildGenerateInput forwards max_tokens and tools in a single model step", () => {
+  const plain = _internal.buildGenerateInput({ model: "hy3", messages: [{ role: "user", content: "hi" }], topP: 0.9 });
+  assert.deepEqual(plain, { model: "hy3", messages: [{ role: "user", content: "hi" }], topP: 0.9 });
+
+  const withTools = _internal.buildGenerateInput({
+    model: "hy4",
+    messages: [{ role: "user", content: "hi" }],
+    maxTokens: 64,
+    tools: [READ_FILE_TOOL],
+    toolChoice: "auto",
+  });
+  assert.deepEqual(withTools.max_tokens, 64);
+  assert.deepEqual(withTools.tools, [READ_FILE_TOOL]);
+  assert.deepEqual(withTools.toolChoice, "auto");
+  assert.deepEqual(withTools.maxSteps, 1, "the SDK must not execute the agent's tools itself");
 });
 
 test("validateChatEvent rejects image parts with IMAGE_INPUT_NOT_SUPPORTED", () => {
@@ -141,6 +231,47 @@ test("buildChatCompletion tolerates missing usage and text", () => {
   const completion = _internal.buildChatCompletion({}, "hy3");
   assert.deepEqual(completion.choices[0].message.content, "");
   assert.deepEqual(completion.usage, { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+});
+
+test("buildChatCompletion returns the model's tool calls with finish_reason tool_calls", () => {
+  const toolCall = { id: "call_9", type: "function", function: { name: "read_file", arguments: '{"path":"note.txt"}' } };
+  const upstreamMessage = { role: "assistant", content: "", tool_calls: [toolCall] };
+  const usage = { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28 };
+
+  const fromRaw = _internal.buildChatCompletion(
+    { text: "", messages: [{ role: "user", content: "hi" }, upstreamMessage], usage, rawResponses: [{ choices: [{ message: upstreamMessage, finish_reason: "tool_calls" }] }] },
+    "hy4",
+    "rid-tc",
+    1,
+  );
+  assert.deepEqual(fromRaw.choices[0].message, { role: "assistant", content: null, tool_calls: [toolCall] });
+  assert.deepEqual(fromRaw.choices[0].finish_reason, "tool_calls");
+  assert.deepEqual(fromRaw.usage, usage);
+
+  // SDKs without rawResponses: the reply is the message appended to `messages`.
+  const fromMessages = _internal.buildChatCompletion(
+    { text: "", messages: [{ role: "user", content: "hi" }, upstreamMessage], usage },
+    "hy4",
+    "rid-tc",
+    1,
+  );
+  assert.deepEqual(fromMessages.choices[0].message.tool_calls, [toolCall]);
+
+  // Tool calls from the conversation history are never echoed as a new reply.
+  const history = _internal.buildChatCompletion(
+    { text: "done", messages: [{ role: "user", content: "hi" }, upstreamMessage], usage },
+    "hy4",
+    "rid-tc",
+    2,
+  );
+  assert.deepEqual(history.choices[0].message, { role: "assistant", content: "done" });
+  assert.deepEqual(history.choices[0].finish_reason, "stop");
+
+  const truncated = _internal.buildChatCompletion(
+    { text: "cut", usage, rawResponses: [{ choices: [{ message: { role: "assistant", content: "cut" }, finish_reason: "length" }] }] },
+    "hy4",
+  );
+  assert.deepEqual(truncated.choices[0].finish_reason, "length");
 });
 
 /* ---------------- main entry with injected callModel ---------------- */
