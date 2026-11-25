@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [SemVer](https://semver.org/).
 
+## [0.2.9] - 2026-11-25
+
+- Optional DSH text-to-image: enable **Image generation**, select
+  `cloudbase/hy-image-v3.5-preview`, and open the returned image link.
+  Only the current text prompt goes to the separate `generateImage`
+  function. DSH title requests and runtime context are not image prompts.
+- Image generation is off by default. Chat still uses the configured
+  `aiProxy`; its code and deployment package are unchanged from 0.2.8.
+  Users on plugin 0.2.4 need neither an upgrade nor a redeploy for chat.
+
 ## [0.2.8] - 2026-11-24
 
 - Image input: aiProxy 1.3.0 forwards OpenAI `image_url` parts on user

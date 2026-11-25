@@ -35,7 +35,11 @@ Image input follows the [official model list](https://docs.cloudbase.net/ai/avai
 
 Availability and billing depend on the environment. Under the [official source restrictions](https://docs.cloudbase.net/ai/ai-inspire-plan-usage-governance), third-party calls from Magpie, including calls via cloud functions, are not eligible for the growth-plan text or image gift quota. They may use a paid plan or fail.
 
-**DSH image preview (off by default):** Keep `aiProxy` and deploy a separate event function named `generateImage` in the same environment (`{"prompt":"…"}` → `{"url":"https://…"}`). Enable **Image generation** in the plugin options, or run `magpie plugin options '<installed-plugin-spec>' '{"image_generation":true}'` with the spec from `magpie plugin list`. Select `cloudbase/hy-image-v3.5-preview` in DSH. Each new text prompt requests one image and returns its URL as an assistant message; history, reference images and tools are not sent. Avoid routing background tasks or automatic model tests here: a test prompt can generate a billable image.
+**DSH image generation (off by default, plugin 0.2.9+):** Chat-only users, including those on 0.2.4, don't need to change anything.
+
+1. For image generation only, create a separate event function named `generateImage` in the same environment (Node.js 20, entry point `index.main`), then upload the [ZIP with dependencies](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/v0.2.9/generateImage-with-deps.zip) and deploy directly. Do **not** overwrite `aiProxy` or change the login's function name.
+2. Enable **Image generation** in the Magpie plugin options. In DSH select `cloudbase/hy-image-v3.5-preview` and send a text prompt.
+3. Open the returned HTTPS link to see the image; download it before the link expires. Each prompt requests a new image; history, reference images and tools are not sent. Avoid automatic routing, background tasks and model tests here: each invocation can incur charges.
 
 ## What you need
 
