@@ -874,6 +874,7 @@ test("DSH title and runtime reminders never reach the image function", async () 
   try {
     assert.equal((await (await request(title)).json()).choices[0].message.content, "图片生成");
     assert.match(await (await request(title, true)).text(), /data: \[DONE\]/);
+    assert.equal((await (await request([title[0], user('Update the session title from this JSON object:\n{}')])).json()).choices[0].message.content, "图片生成");
     for (const last of [{ role: "assistant", content: "old URL" }, { role: "tool", content: "old result" },
       user([{ type: "image_url", image_url: { url: "https://example.org/old" } }])]) {
       assert.equal((await request([agent, user("old prompt"), last, reminder])).status, 400);
@@ -881,6 +882,31 @@ test("DSH title and runtime reminders never reach the image function", async () 
     assert.equal((await request([agent, reminder])).status, 400);
     assert.equal((await request([agent, user("画橘猫"), reminder, reminder])).status, 200);
     assert.deepEqual(gw.calls.map(c => JSON.parse(c.init.body)), [{ prompt: "画橘猫" }]);
+  } finally { gw.restore(); }
+});
+
+test("DSH web clock is metadata, not the image prompt; ambiguous turns do not incur a call", async () => {
+  const doFetch = await loaderFetch(await CloudbaseBridge({}, { image_generation: true }));
+  const agent = { role: "system", content: "You are an AI agent powered by DeepSeek Harness." };
+  const user = content => ({ role: "user", content });
+  const clock = [
+    "Time sampled while preparing turn 1, step 1: 2026-11-25T22:39:26+08:00[Asia/Singapore]",
+    "Browser time zone for this request: Asia/Singapore. Interpret otherwise-unqualified dates and times in this zone.",
+    "Elapsed since the preceding model-visible message: unavailable.",
+  ].join("\n");
+  const reminder = user("<system-reminder>\nruntime context\n</system-reminder>");
+  const prompt = "画一只戴蓝色围巾的橘猫，水彩风格";
+  const call = (...tail) => doFetch(chatBody({ model: IMAGE_MODEL, messages: [agent, ...tail] }));
+  const gw = mockGateway(async () => Response.json({ url: "https://example.org/cat.png" }));
+  try {
+    assert.equal((await call(user(prompt), reminder, user(clock))).status, 200);
+    assert.equal((await call(user("old"), { role: "assistant", content: "done" },
+      user(prompt), user([{ type: "text", text: clock }]), reminder)).status, 200);
+    assert.equal((await call(user("old"), { role: "assistant", content: "done" }, user(clock))).status, 400);
+    assert.equal((await call(user(prompt), user("unknown injected text"), user(clock))).status, 400);
+    const literal = "画一张写着 Browser time zone for this request: Asia/Singapore 的海报";
+    assert.equal((await call(user(literal))).status, 200);
+    assert.deepEqual(gw.calls.map(c => JSON.parse(c.init.body).prompt), [prompt, prompt, literal]);
   } finally { gw.restore(); }
 });
 

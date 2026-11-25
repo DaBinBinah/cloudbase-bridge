@@ -34,7 +34,7 @@
  * Version & constants (single source of truth; no imports allowed —  *
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
-export const PLUGIN_VERSION = "0.2.9-image.2";
+export const PLUGIN_VERSION = "0.2.9-image.3";
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
 const PROVIDER_ID = "cloudbase";
@@ -375,25 +375,35 @@ function textContent(content) {
 }
 function isDshTitleRequest(messages) {
     const last = messages.at(-1);
-    return isPlainObject(last) && last.role === "user" && textContent(last.content)
-        .startsWith("Generate the session title from this JSON array of human messages:") &&
+    return isPlainObject(last) && last.role === "user" &&
+        /^(?:Generate the session title from this JSON array of human messages:|Update the session title from this JSON object:)/.test(textContent(last.content)) &&
         messages.some(m => isPlainObject(m) && m.role === "system" && textContent(m.content)
             .includes("Create a concise title for an AI coding-assistant session from the supplied human messages."));
+}
+function isDshContext(prompt) {
+    if (prompt.startsWith("<system-reminder>") && prompt.endsWith("</system-reminder>"))
+        return true;
+    return /^Time sampled while preparing turn \d+, step \d+: .+\r?\nBrowser time zone for this request: .+\r?\nElapsed since the preceding (?:model-visible message|step context): .+\.$/.test(prompt);
 }
 function imageEvent(messages) {
     const dsh = messages.some(m => isPlainObject(m) && m.role === "system" && textContent(m.content)
         .includes("You are an AI agent powered by DeepSeek Harness."));
+    let candidate = "";
     for (let i = messages.length - 1; i >= 0; --i) {
         const m = messages[i];
         if (!isPlainObject(m) || m.role !== "user")
             break;
         const prompt = textContent(m.content);
-        // DSH appends runtime context as separate user turns after the human prompt.
-        if (dsh && prompt.startsWith("<system-reminder>") && prompt.endsWith("</system-reminder>"))
+        if (dsh && isDshContext(prompt))
             continue;
-        return prompt ? { prompt } : null;
+        // Unknown additional user-role context: don't guess which text should incur a charge.
+        if (!prompt || candidate)
+            return null;
+        candidate = prompt;
+        if (!dsh)
+            break;
     }
-    return null;
+    return candidate ? { prompt: candidate } : null;
 }
 function imageCompletion(result) {
     if (!isPlainObject(result) || typeof result.url !== "string" || !/^https:\/\/[^\s]+$/i.test(result.url))
@@ -653,7 +663,7 @@ async function bridgeFetch(input, init) {
     const functionName = isImage ? IMAGE_FUNCTION : cfg.functionName;
     const event = isImage ? imageEvent(body.messages) : buildInvokeEvent(body, model);
     if (!event)
-        return errorResponse(400, "Image generation expects a new, non-empty text-only user prompt.", { code: "INVALID_IMAGE_PROMPT" });
+        return errorResponse(400, "Image generation expects one unambiguous, non-empty text-only user prompt in the current turn.", { code: "INVALID_IMAGE_PROMPT" });
     const payload = JSON.stringify(event);
     // Measure real UTF-8 bytes: string .length counts UTF-16 code units and
     // under-reports CJK content (each CJK char is typically 3 bytes but 1-2 units).
