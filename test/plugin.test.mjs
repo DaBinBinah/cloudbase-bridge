@@ -454,7 +454,7 @@ test("gateway error codes map to statuses that keep Magpie failover sane", async
     ["FUNCTIONS_NOT_FOUND", 404, /deploy/i],
     ["PERMISSION_DENIED", 401, /API key/],
     ["EXCEED_AUTHORITY", 403, /security rules/i],
-    ["AI_CHANNEL_NOT_ALLOWED", 403, /SDK channels/i],
+    ["AI_CHANNEL_NOT_ALLOWED", 403, /invocation source/i],
     ["AI_MODEL_NOT_SUPPORTED", 404, /model/i],
     ["EXCEED_TOKEN_QUOTA_LIMIT", 429, /quota/i],
     ["FUNCTIONS_TIME_LIMIT_EXCEEDED", 504, /timeout/i],
@@ -777,6 +777,78 @@ test("provider.models refines the list from aiProxy ping; failures keep the stat
 });
 
 /* ---------------- privacy ---------------- */
+
+const IMAGE_MODEL = "cloudbase/hy-image-v3.5-preview";
+
+test("image alias is opt-in, survives chat discovery and uses a separate function", async () => {
+  let enabled = true;
+  const hooks = await CloudbaseBridge({ magpie: { option: (p,k) => p === "cloudbase" && k === "image_generation" && enabled } });
+  const config = {};
+  await hooks.config(config);
+  const base = config.provider.cloudbase.models;
+  const imageId = IMAGE_MODEL.split("/")[1];
+  assert.deepEqual(base[imageId].modalities, { input: ["text"], output: ["text"] });
+  assert.equal(base[imageId].tool_call, false);
+  const url = "https://example.org/output.png?signature=one%2Btwo";
+  const gw = mockGateway(async (_, init) => {
+    const event = JSON.parse(init.body);
+    return Response.json(event.action === "ping" ? { ok: true, models: ["hy4"] } :
+      event.action === "chat" ? aiProxyCompletion("chat works") : { ok: true, url, width: 1024, height: 1024 });
+  });
+  try {
+    const refined = await hooks.provider.models({ models: base }, { auth: fakeAuth() });
+    assert.deepEqual(Object.keys(refined).sort(), [imageId, "hy4"].sort());
+    const doFetch = await loaderFetch(hooks);
+    for (const stream of [false, true]) {
+      const res = await doFetch(chatBody({ model: IMAGE_MODEL, stream, tools: [{}], messages: [
+        { role: "system", content: "do not forward" }, { role: "user", content: "old" },
+        { role: "assistant", content: "old URL" },
+        { role: "user", content: [{ type: "text", text: "画一只猫" }, { type: "text", text: "水彩风格" }] },
+      ] }));
+      assert.equal(res.status, 200);
+      const call = gw.calls.at(-1);
+      assert.match(call.url, /\/v1\/functions\/generateImage$/);
+      assert.equal(call.init.headers.authorization, `Bearer ${TEST_KEY}`);
+      assert.deepEqual(JSON.parse(call.init.body), { prompt: "画一只猫\n水彩风格" });
+      if (stream) {
+        const text = await res.text();
+        assert.ok(text.includes(url) && text.includes("data: [DONE]"));
+      } else {
+        const json = await res.json();
+        assert.equal(json.model, IMAGE_MODEL);
+        assert.deepEqual(json.choices[0].message, { role: "assistant", content: url });
+      }
+    }
+    assert.equal((await (await doFetch(chatBody({ model: "cloudbase/hy4" }))).json()).choices[0].message.content, "chat works");
+    assert.match(gw.calls.at(-1).url, /\/aiProxy$/);
+    enabled = false;
+    assert.equal((await doFetch(chatBody({ model: IMAGE_MODEL }))).status, 404);
+    enabled = true;
+    for (const last of [{ role: "tool", content: "do not replay" }, { role: "user", content: " " },
+      { role: "user", content: [{ type: "image_url", image_url: { url } }] }]) {
+      const res = await doFetch(chatBody({ model: IMAGE_MODEL, messages: [{ role: "user", content: "old" }, last] }));
+      assert.equal(res.status, 400);
+    }
+    assert.equal(gw.calls.length, 4);
+  } finally { gw.restore(); }
+});
+
+test("image requests surface function errors, reject invalid image URLs and never fall back to chat", async () => {
+  const doFetch = await loaderFetch(await CloudbaseBridge({}, { image_generation: true }));
+  for (const [reply, status, code] of [
+    [{ ok: false, stage: "generate", code: "AI_CHANNEL_NOT_ALLOWED", message: "denied" }, 403, "AI_CHANNEL_NOT_ALLOWED"],
+    [{ ok: true, url: "javascript:alert(1)" }, 502, "INVALID_FUNCTION_RESPONSE"],
+    [{}, 502, "INVALID_FUNCTION_RESPONSE"],
+  ]) {
+    const gw = mockGateway(async () => Response.json(reply));
+    try {
+      const res = await doFetch(chatBody({ model: IMAGE_MODEL }));
+      assert.equal(res.status, status);
+      assert.equal((await res.json()).error.code, code);
+      assert.equal(gw.calls.length, 1);
+    } finally { gw.restore(); }
+  }
+});
 
 test("nothing in logs or error payloads contains the API key or message content", async () => {
   const { hooks, logs } = await makePlugin();

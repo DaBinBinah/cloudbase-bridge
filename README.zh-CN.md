@@ -4,11 +4,7 @@
 
 <p align="center">[English](README.md) | [简体中文](README.zh-CN.md) · **GitHub**：[DaBinBinah/cloudbase-bridge](https://github.com/DaBinBinah/cloudbase-bridge)</p>
 
-通过你自己部署的 `aiProxy` 云函数，把腾讯云开发 CloudBase「小程序成长计划」的 AI 额度接入 [Magpie](https://usemagpie.ai)，作为普通的 OpenAI 兼容供应商使用。装好之后，它就是你账号下的一个普通供应商，各个 agent 都能直接用。
-
-**GitHub**：[github.com/DaBinBinah/cloudbase-bridge](https://github.com/DaBinBinah/cloudbase-bridge)
-
-通过你自己部署的 `aiProxy` 云函数，把腾讯云开发 CloudBase「小程序成长计划」的 AI 额度接入 [Magpie](https://usemagpie.ai)，作为普通的 OpenAI 兼容供应商使用。装好之后，它就是你账号下的一个普通供应商，各个 agent 都能直接用。
+通过你自己部署的 `aiProxy` 云函数，把腾讯云开发 CloudBase 模型接入 [Magpie](https://usemagpie.ai)，作为 OpenAI 兼容供应商使用。
 
 > 社区项目：和 Magpie、腾讯云都没有关系，也没有经过 Magpie 官方审核或收录。
 
@@ -16,7 +12,7 @@
 
 ## 为什么要经过一个云函数？
 
-成长计划送的额度只认 CloudBase SDK 这条通道，直接去调 `/v1/ai/*` 模型端点会被拒（`403 AI_CHANNEL_NOT_ALLOWED`）。所以这个插件不直连模型，而是走官方的函数调用端点，让你环境里的 `aiProxy` 云函数用 `@cloudbase/node-sdk` 去调模型——这条路是允许的：
+插件不直连 `/v1/ai/*` 模型端点，而是调用你环境里的 `aiProxy` 云函数，由函数用 `@cloudbase/node-sdk` 调模型。使用 SDK 不会改变原请求的额度适用范围。
 
 ```
 Agent ─► magpie 网关 ─► 插件 ── POST /v1/functions/aiProxy ──► aiProxy（你的环境）── SDK ──► 模型
@@ -37,11 +33,13 @@ Agent ─► magpie 网关 ─► 插件 ── POST /v1/functions/aiProxy ─�
 
 图片输入以[官方模型列表](https://docs.cloudbase.net/ai/available-models)为准，需要 aiProxy 1.3.0 及以上。图片放在 user 消息里，用 OpenAI 的 `image_url` 格式（`http(s)` 链接或 `data:image/...;base64` 地址），大小计入 6 MiB 的请求上限。
 
-这些模型不用在控制台开启，用量会自动从赠送额度里扣。个别模型在部分环境不一定放开——如果 CloudBase 返回 `AI_MODEL_NOT_SUPPORTED`，以你环境的实际支持为准。生图模型 `hy-image-v3.5-preview` 不在本插件范围内：桥接只走对话通道（输入文字和图片，输出文字）。
+模型和计费以当前环境为准。[官方调用来源规则](https://docs.cloudbase.net/ai/ai-inspire-plan-usage-governance)明确：Magpie 等第三方调用即使经过云函数，也不抵扣成长计划赠送的生文或生图额度，可能扣套餐额度，或调用失败。
+
+**DSH 生图测试（默认关闭）：** 在同一环境部署独立普通云函数 `generateImage`（接收 `{"prompt":"…"}`，返回 `{"url":"https://…"}`），保留 `aiProxy`。在 Magpie 的 CloudBase 插件选项中打开「启用 DSH 生图」，或执行 `magpie plugin options '<插件安装地址>' '{"image_generation":true}'`（用 `magpie plugin list` 查看安装地址）。在 DSH 选 `cloudbase/hy-image-v3.5-preview` 并发送文字提示词，聊天回复就是图片链接。每条新提示词单独生成一张图；不传聊天历史、参考图或工具。不要将此模型设为自动路由或后台任务模型，测试模型也可能产生生图费用。
 
 ## 准备工作
 
-1. 一个开通了成长计划（或买了 Token 资源包）的 CloudBase 环境；
+1. 有对应模型权限、且有适用于当前调用来源的额度的 CloudBase 环境；
 2. 在这个环境里部署 `aiProxy` 云函数（见下一节）；
 3. 一个服务端 API Key：在控制台「环境设置 → API Key」创建。
 
