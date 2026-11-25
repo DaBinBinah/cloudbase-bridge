@@ -1,0 +1,8 @@
+{
+  "name": "cloudbase-image-demo",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "dependencies": { "@cloudbase/node-sdk": "3.18.8" },
+  "overrides": { "@cloudbase/ai": "2.32.0" }
+}
