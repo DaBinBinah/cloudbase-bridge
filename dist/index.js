@@ -34,7 +34,7 @@
  * Version & constants (single source of truth; no imports allowed —  *
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
-export const PLUGIN_VERSION = "0.2.10-preview.1";
+export const PLUGIN_VERSION = "0.2.10-preview.2";
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
 const PROVIDER_ID = "cloudbase";
@@ -43,6 +43,7 @@ const DEFAULT_FUNCTION_NAME = "aiProxy";
 const IMAGE_MODEL = "hy-image-v3.5-preview";
 const IMAGE_FUNCTION = "generateImage";
 const IMAGE_OPTION = "image_generation";
+const INLINE_OPTION = "image_inline_preview";
 const IMAGE_ENTRY = {
     name: "Hunyuan Image 3.5 Preview (prompt → URL)",
     tool_call: false,
@@ -377,17 +378,29 @@ function isDshTitleRequest(messages) {
     const last = messages.at(-1);
     return isPlainObject(last) && last.role === "user" &&
         /^(?:Generate the session title from this JSON array of human messages:|Update the session title from this JSON object:)/.test(textContent(last.content)) &&
-        messages.some(m => isPlainObject(m) && m.role === "system" && textContent(m.content)
+        messages.some(m => isPlainObject(m) && (m.role === "system" || m.role === "developer") && textContent(m.content)
             .includes("Create a concise title for an AI coding-assistant session from the supplied human messages."));
 }
-function isDshContext(prompt) {
-    if (prompt.startsWith("<system-reminder>") && prompt.endsWith("</system-reminder>"))
-        return true;
+function isDshClock(prompt) {
     return /^Time sampled while preparing turn \d+, step \d+: .+\r?\nBrowser time zone for this request: .+\r?\nElapsed since the preceding (?:model-visible message|step context): .+\.$/.test(prompt);
 }
+function isReminder(prompt) {
+    return prompt.startsWith("<system-reminder>") && prompt.endsWith("</system-reminder>");
+}
 function isDshConversation(messages) {
-    return messages.some(m => isPlainObject(m) && m.role === "system" && textContent(m.content)
-        .includes("You are an AI agent powered by DeepSeek Harness."));
+    return messages.some(m => {
+        if (!isPlainObject(m))
+            return false;
+        if (m.role === "system" || m.role === "developer")
+            return textContent(m.content).includes("You are an AI agent powered by DeepSeek Harness.");
+        // The Web preset can omit harness identity but append a tagged session snapshot or clock.
+        if (m.role !== "user")
+            return false;
+        const text = textContent(m.content);
+        return isDshClock(text) || (isReminder(text) &&
+            text.startsWith("<system-reminder>\nThe following information describes your current session") &&
+            text.includes("\nCurrent DSH file policy"));
+    });
 }
 function imageEvent(messages, dsh) {
     let candidate = "";
@@ -396,7 +409,7 @@ function imageEvent(messages, dsh) {
         if (!isPlainObject(m) || m.role !== "user")
             break;
         const prompt = textContent(m.content);
-        if (dsh && isDshContext(prompt))
+        if (dsh && (isReminder(prompt) || isDshClock(prompt)))
             continue;
         // Unknown additional user-role context: don't guess which text should incur a charge.
         if (!prompt || candidate)
@@ -407,7 +420,7 @@ function imageEvent(messages, dsh) {
     }
     return candidate ? { prompt: candidate } : null;
 }
-function imageCompletion(result, dsh) {
+function imageCompletion(result, inline) {
     if (!isPlainObject(result) || typeof result.url !== "string" || !/^https:\/\/[^\s]+$/i.test(result.url))
         return null;
     try {
@@ -419,7 +432,7 @@ function imageCompletion(result, dsh) {
         return null;
     }
     let content = result.url;
-    if (dsh) {
+    if (inline) {
         // Keep the signed URL intact after Markdown decodes the angle-bracket destination.
         if (/[<>\\\u0000-\u001f\u007f]/u.test(content))
             return null;
@@ -739,7 +752,7 @@ async function bridgeFetch(input, init) {
     if (isImage && isPlainObject(functionResult) && functionResult.ok === false) {
         return mapFunctionError(functionResult, upstream.headers.get("x-request-id") ?? undefined);
     }
-    const completion = isImage ? imageCompletion(functionResult, dshImage) : normalizeCompletion(functionResult);
+    const completion = isImage ? imageCompletion(functionResult, dshImage || this.inlineImageEnabled()) : normalizeCompletion(functionResult);
     if (!completion) {
         log("error", `${functionName} returned an unexpected response`);
         return errorResponse(502, isImage ? `${functionName} did not return an HTTPS image URL.` : "aiProxy reply is missing `choices[0].message`. Make sure the deployed aiProxy matches this plugin version (see docs/deploy-aiproxy.md).", { code: "INVALID_FUNCTION_RESPONSE" });
@@ -793,8 +806,9 @@ function makeLogger(input) {
 export const CloudbaseBridge = async (input = {}, options = {}) => {
     const log = makeLogger(input);
     const magpieOptions = isPlainObject(input?.magpie?.options) ? input.magpie.options : undefined;
-    const imageEnabled = () => input.magpie?.option?.(PROVIDER_ID, IMAGE_OPTION)
-        ?? (options.image_generation ?? magpieOptions?.[IMAGE_OPTION]) === true;
+    const optionEnabled = (key) => input.magpie?.option?.(PROVIDER_ID, key)
+        ?? (options[key] ?? magpieOptions?.[key]) === true;
+    const imageEnabled = () => optionEnabled(IMAGE_OPTION);
     const hooks = {
         config: async (cfg) => {
             cfg.provider ??= {};
@@ -818,6 +832,11 @@ export const CloudbaseBridge = async (input = {}, options = {}) => {
                     description: "Send text prompts to the separate generateImage function. Each invocation can incur charges.",
                     default: false,
                     filtersModels: true,
+                }, {
+                    key: INLINE_OPTION,
+                    label: "始终显示图片预览 / Always show image previews",
+                    description: "Use Markdown for all image replies, even if the gateway removes DSH identifiers. Does not enable image generation.",
+                    default: false,
                 }],
             methods: [
                 {
@@ -869,7 +888,7 @@ export const CloudbaseBridge = async (input = {}, options = {}) => {
                 if (cfg.gatewayBaseUrl) {
                     log("debug", "gatewayBaseUrl override active (testing only)");
                 }
-                const context = { cfg, log, imageEnabled };
+                const context = { cfg, log, imageEnabled, inlineImageEnabled: () => optionEnabled(INLINE_OPTION) };
                 return {
                     baseURL: gatewayBase(cfg),
                     fetch: bridgeFetch.bind(context),

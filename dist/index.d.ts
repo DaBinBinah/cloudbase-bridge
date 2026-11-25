@@ -30,7 +30,7 @@
  * - `dist/` must be committed so the GitHub-topic discovery path can load
  *   the plugin straight from the repository.
  */
-export declare const PLUGIN_VERSION: "0.2.10-preview.1";
+export declare const PLUGIN_VERSION: "0.2.10-preview.2";
 /**
  * Model catalog (text chat models).
  *
@@ -98,6 +98,7 @@ interface PluginOptions {
     envId?: string;
     functionName?: string;
     image_generation?: boolean;
+    image_inline_preview?: boolean;
     region?: "cn" | "intl";
     timeoutMs?: number;
     gatewayBaseUrl?: string;
@@ -204,13 +205,19 @@ export declare const CloudbaseBridge: (input?: PluginInput, options?: PluginOpti
     } & Json) => Promise<void>;
     auth: {
         provider: string;
-        options: {
+        options: ({
             key: string;
             label: string;
             description: string;
             default: boolean;
             filtersModels: boolean;
-        }[];
+        } | {
+            key: string;
+            label: string;
+            description: string;
+            default: boolean;
+            filtersModels?: undefined;
+        })[];
         methods: {
             type: string;
             label: string;
@@ -245,7 +252,7 @@ export declare const CloudbaseBridge: (input?: PluginInput, options?: PluginOpti
     };
 }>;
 export declare const _internal: {
-    PLUGIN_VERSION: "0.2.10-preview.1";
+    PLUGIN_VERSION: "0.2.10-preview.2";
     PROVIDER_ID: string;
     DEFAULT_FUNCTION_NAME: string;
     DEFAULT_TIMEOUT_MS: number;
