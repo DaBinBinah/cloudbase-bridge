@@ -34,12 +34,20 @@
  * Version & constants (single source of truth; no imports allowed —  *
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
-export const PLUGIN_VERSION = "0.2.8";
+export const PLUGIN_VERSION = "0.2.9";
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
 const PROVIDER_ID = "cloudbase";
 const PROVIDER_ID_FALLBACK_PREFIX = "cloudbase-plugin/";
 const DEFAULT_FUNCTION_NAME = "aiProxy";
+const IMAGE_MODEL = "hy-image-v3.5-preview";
+const IMAGE_FUNCTION = "generateImage";
+const IMAGE_OPTION = "image_generation";
+const IMAGE_ENTRY = {
+    name: "Hunyuan Image 3.5 Preview (prompt → URL)",
+    tool_call: false,
+    modalities: { input: ["text"], output: ["text"] },
+};
 const DEFAULT_TIMEOUT_MS = 150_000; // gateway invoke waits for the function; keep above the recommended 120 s function timeout
 // A CloudBase event function takes a synchronous event of up to 6 MB.
 const DEFAULT_MAX_EVENT_BYTES = 6 * 1024 * 1024;
@@ -111,6 +119,20 @@ function accountModelEntry(id, base) {
     }
     return entry;
 }
+function withImageModel(models, enabled, base) {
+    if (enabled === Object.hasOwn(models, IMAGE_MODEL))
+        return models;
+    if (!enabled) {
+        const { [IMAGE_MODEL]: _, ...chat } = models;
+        return chat;
+    }
+    const entry = base[IMAGE_MODEL] ?? accountModelEntry(IMAGE_MODEL, base);
+    const image = base[IMAGE_MODEL] ?? (isPlainObject(entry.capabilities)
+        ? { ...entry, name: IMAGE_ENTRY.name, capabilities: { ...entry.capabilities, toolcall: false,
+                input: { text: true, image: false }, output: { text: true, image: false } } }
+        : IMAGE_ENTRY);
+    return { ...models, [IMAGE_MODEL]: image };
+}
 /* ------------------------------------------------------------------ *
  * Small utilities.                                                   *
  * ------------------------------------------------------------------ */
@@ -159,8 +181,8 @@ function gatewayBase(cfg) {
         : `${cfg.envId}${GATEWAY_SUFFIX_CN}`;
     return `https://${host}`;
 }
-function invokeUrl(cfg) {
-    return `${gatewayBase(cfg)}/v1/functions/${encodeURIComponent(cfg.functionName)}`;
+function invokeUrl(cfg, name = cfg.functionName) {
+    return `${gatewayBase(cfg)}/v1/functions/${encodeURIComponent(name)}`;
 }
 /**
  * Combine the agent's AbortSignal with our own timeout. Uses
@@ -254,7 +276,7 @@ function parseGatewayErrorBody(text) {
  * - 429 for quota/concurrency so failover can try another model/account;
  * - 504 for timeouts, 502 for function failures.
  */
-function mapGatewayError(status, body) {
+function mapGatewayError(status, body, functionName = DEFAULT_FUNCTION_NAME) {
     const code = body.code ?? `HTTP_${status}`;
     const upstream = truncate(body.message ?? "(no message)", 300);
     const requestId = body.requestId;
@@ -265,12 +287,12 @@ function mapGatewayError(status, body) {
         case "TOKEN_EXPIRED":
             return errorResponse(401, `CloudBase rejected the API key (code: ${code}). Re-run \`magpie plugin login cloudbase\` with a valid server-side API Key. Upstream: ${upstream}`, { code, requestId });
         case "EXCEED_AUTHORITY":
-            return errorResponse(403, `The cloud function rejected the caller (EXCEED_AUTHORITY). Check the aiProxy cloud function security rules in the CloudBase console. Upstream: ${upstream}`, { code, requestId });
+            return errorResponse(403, `The cloud function rejected the caller (EXCEED_AUTHORITY). Check the ${functionName} cloud function security rules in the CloudBase console. Upstream: ${upstream}`, { code, requestId });
         case "FUNCTIONS_NOT_FOUND":
         case "FUNCTIONS_QUALIFIER_NOT_FOUND":
-            return errorResponse(404, `Cloud function not found (code: ${code}). Deploy aiProxy to this environment first — see docs/deploy-aiproxy.md. Upstream: ${upstream}`, { code, requestId });
+            return errorResponse(404, `Cloud function not found (code: ${code}). Deploy ${functionName} to this environment first. Upstream: ${upstream}`, { code, requestId });
         case "AI_CHANNEL_NOT_ALLOWED":
-            return errorResponse(403, `CloudBase refused the AI channel (AI_CHANNEL_NOT_ALLOWED). Growth-plan quota can only be spent from CloudBase SDK channels; make sure aiProxy calls the model via @cloudbase/node-sdk and is deployed in the same environment. Upstream: ${upstream}`, { code, requestId });
+            return errorResponse(403, `CloudBase refused the AI channel (AI_CHANNEL_NOT_ALLOWED). Check that ${functionName} uses @cloudbase/node-sdk in the same environment and that this invocation source is eligible. Upstream: ${upstream}`, { code, requestId });
         case "AI_MODEL_NOT_SUPPORTED":
         case "AI_MODEL_DISABLED":
         case "AI_MODEL_NOT_FOUND":
@@ -283,11 +305,11 @@ function mapGatewayError(status, body) {
         case "EXCEED_RATE_LIMIT":
             return errorResponse(429, `CloudBase concurrency/rate limit reached (code: ${code}). Retry later or lower magpie.maxConcurrency for this provider.`, { code, requestId });
         case "FUNCTIONS_TIME_LIMIT_EXCEEDED":
-            return errorResponse(504, `The aiProxy cloud function timed out (FUNCTIONS_TIME_LIMIT_EXCEEDED). Raise its timeout to 120 s in the CloudBase console/CLI. Upstream: ${upstream}`, { code, requestId });
+            return errorResponse(504, `The ${functionName} cloud function timed out (FUNCTIONS_TIME_LIMIT_EXCEEDED). Check its timeout in the CloudBase console/CLI. Upstream: ${upstream}`, { code, requestId });
         case "FUNCTIONS_INVOCATION_FAILED":
         case "FUNCTIONS_MEMORY_LIMIT_EXCEEDED":
         case "FUNCTIONS_STATUS_ABNORMAL":
-            return errorResponse(502, `The aiProxy cloud function failed (code: ${code}). Check function logs in the CloudBase console. Upstream: ${upstream}`, { code, requestId });
+            return errorResponse(502, `The ${functionName} cloud function failed (code: ${code}). Check function logs in the CloudBase console. Upstream: ${upstream}`, { code, requestId });
         default:
             return errorResponse(status >= 500 ? 502 : status, `CloudBase request failed (code: ${code}). Upstream: ${upstream}`, { code, requestId });
     }
@@ -345,6 +367,56 @@ function buildInvokeEvent(body, model) {
         }
     }
     return event;
+}
+function textContent(content) {
+    return typeof content === "string" ? content.trim()
+        : Array.isArray(content) && content.every(part => isPlainObject(part) && part.type === "text" && typeof part.text === "string")
+            ? content.map(part => part.text).join("\n").trim() : "";
+}
+function isDshTitleRequest(messages) {
+    const last = messages.at(-1);
+    return isPlainObject(last) && last.role === "user" &&
+        /^(?:Generate the session title from this JSON array of human messages:|Update the session title from this JSON object:)/.test(textContent(last.content)) &&
+        messages.some(m => isPlainObject(m) && m.role === "system" && textContent(m.content)
+            .includes("Create a concise title for an AI coding-assistant session from the supplied human messages."));
+}
+function isDshContext(prompt) {
+    if (prompt.startsWith("<system-reminder>") && prompt.endsWith("</system-reminder>"))
+        return true;
+    return /^Time sampled while preparing turn \d+, step \d+: .+\r?\nBrowser time zone for this request: .+\r?\nElapsed since the preceding (?:model-visible message|step context): .+\.$/.test(prompt);
+}
+function imageEvent(messages) {
+    const dsh = messages.some(m => isPlainObject(m) && m.role === "system" && textContent(m.content)
+        .includes("You are an AI agent powered by DeepSeek Harness."));
+    let candidate = "";
+    for (let i = messages.length - 1; i >= 0; --i) {
+        const m = messages[i];
+        if (!isPlainObject(m) || m.role !== "user")
+            break;
+        const prompt = textContent(m.content);
+        if (dsh && isDshContext(prompt))
+            continue;
+        // Unknown additional user-role context: don't guess which text should incur a charge.
+        if (!prompt || candidate)
+            return null;
+        candidate = prompt;
+        if (!dsh)
+            break;
+    }
+    return candidate ? { prompt: candidate } : null;
+}
+function imageCompletion(result) {
+    if (!isPlainObject(result) || typeof result.url !== "string" || !/^https:\/\/[^\s]+$/i.test(result.url))
+        return null;
+    try {
+        const url = new URL(result.url);
+        if (url.username || url.password)
+            return null;
+    }
+    catch {
+        return null;
+    }
+    return normalizeCompletion({ choices: [{ message: { content: result.url }, finish_reason: "stop" }] });
 }
 function isJsonObjectText(text) {
     try {
@@ -577,12 +649,21 @@ async function bridgeFetch(input, init) {
     if (!model) {
         return errorResponse(400, "Missing model id after removing the provider prefix.", { code: "INVALID_REQUEST" });
     }
-    if (!(model in MODEL_CATALOG)) {
+    const isImage = model === IMAGE_MODEL && this.imageEnabled();
+    if (!isImage && !Object.hasOwn(MODEL_CATALOG, model)) {
         const known = Object.keys(MODEL_CATALOG).join(", ");
         return errorResponse(404, `Model "${truncate(model, 64)}" is not in the CloudBase Bridge catalog. Known models: ${known}.`, { code: "MODEL_NOT_ALLOWED" });
     }
     const stream = body.stream === true;
-    const event = buildInvokeEvent(body, model);
+    if (isImage && isDshTitleRequest(body.messages)) {
+        // A DSH session-title request must never invoke a billable image model.
+        const title = normalizeCompletion({ choices: [{ message: { content: "图片生成" } }] });
+        return stream ? sseResponse(title, rawModel) : jsonCompletionResponse(title, rawModel);
+    }
+    const functionName = isImage ? IMAGE_FUNCTION : cfg.functionName;
+    const event = isImage ? imageEvent(body.messages) : buildInvokeEvent(body, model);
+    if (!event)
+        return errorResponse(400, "Image generation expects one unambiguous, non-empty text-only user prompt in the current turn.", { code: "INVALID_IMAGE_PROMPT" });
     const payload = JSON.stringify(event);
     // Measure real UTF-8 bytes: string .length counts UTF-16 code units and
     // under-reports CJK content (each CJK char is typically 3 bytes but 1-2 units).
@@ -590,12 +671,12 @@ async function bridgeFetch(input, init) {
     if (payloadBytes > DEFAULT_MAX_EVENT_BYTES) {
         return errorResponse(413, `Conversation payload too large (${payloadBytes} bytes; limit ${DEFAULT_MAX_EVENT_BYTES} bytes). Trim the history and retry.`, { code: "PAYLOAD_TOO_LARGE" });
     }
-    log("debug", `invoke ${cfg.functionName} model=${model} stream=${stream} bytes=${payloadBytes}`);
+    log("debug", `invoke ${functionName} model=${model} stream=${stream} bytes=${payloadBytes}`);
     const timeoutSignal = AbortSignal.timeout(cfg.timeoutMs);
     const signal = combineSignals(init?.signal, timeoutSignal);
     let upstream;
     try {
-        upstream = await fetch(invokeUrl(cfg), {
+        upstream = await fetch(invokeUrl(cfg, functionName), {
             method: "POST",
             headers: {
                 "content-type": "application/json",
@@ -617,7 +698,7 @@ async function bridgeFetch(input, init) {
         }
         if (timeoutSignal.aborted) {
             log("warn", `invoke timeout after ${cfg.timeoutMs} ms (model=${model})`);
-            return errorResponse(504, `CloudBase function invocation timed out after ${Math.round(cfg.timeoutMs / 1000)} s. Raise the aiProxy timeout (recommended 120 s) or options.timeoutMs.`, { code: "INVOKE_TIMEOUT" });
+            return errorResponse(504, `CloudBase function invocation timed out after ${Math.round(cfg.timeoutMs / 1000)} s. Check the ${functionName} timeout and options.timeoutMs.`, { code: "INVOKE_TIMEOUT" });
         }
         const reason = error instanceof Error ? truncate(error.message, 200) : "unknown network error";
         log("error", `invoke network failure: ${reason}`);
@@ -625,7 +706,7 @@ async function bridgeFetch(input, init) {
     }
     if (!upstream.ok) {
         const text = await upstream.text().catch(() => "");
-        const mapped = mapGatewayError(upstream.status, parseGatewayErrorBody(text));
+        const mapped = mapGatewayError(upstream.status, parseGatewayErrorBody(text), functionName);
         log("warn", `invoke failed status=${upstream.status} code=${upstream.headers.get("x-request-id") ?? "-"}`);
         return mapped;
     }
@@ -635,8 +716,8 @@ async function bridgeFetch(input, init) {
         functionResult = JSON.parse(responseText);
     }
     catch {
-        log("error", "aiProxy returned non-JSON body");
-        return errorResponse(502, `aiProxy returned a non-JSON body (starts with: ${truncate(responseText.slice(0, 24), 60)}). Redeploy the function from this repository.`, { code: "INVALID_FUNCTION_JSON" });
+        log("error", `${functionName} returned non-JSON body`);
+        return errorResponse(502, `${functionName} returned a non-JSON body. Check the deployed function.`, { code: "INVALID_FUNCTION_JSON" });
     }
     // aiProxy error envelope (it always reports failures inside HTTP 200).
     if (isPlainObject(functionResult) && isPlainObject(functionResult.error)) {
@@ -644,10 +725,13 @@ async function bridgeFetch(input, init) {
         log("warn", `aiProxy error envelope: ${typeof functionResult.error.code === "string" ? functionResult.error.code : "unknown"}`);
         return mapped;
     }
-    const completion = normalizeCompletion(functionResult);
+    if (isImage && isPlainObject(functionResult) && functionResult.ok === false) {
+        return mapFunctionError(functionResult, upstream.headers.get("x-request-id") ?? undefined);
+    }
+    const completion = isImage ? imageCompletion(functionResult) : normalizeCompletion(functionResult);
     if (!completion) {
-        log("error", "aiProxy reply is not a Chat Completions object");
-        return errorResponse(502, "aiProxy reply is missing `choices[0].message`. Make sure the deployed aiProxy matches this plugin version (see docs/deploy-aiproxy.md).", { code: "INVALID_FUNCTION_RESPONSE" });
+        log("error", `${functionName} returned an unexpected response`);
+        return errorResponse(502, isImage ? `${functionName} did not return an HTTPS image URL.` : "aiProxy reply is missing `choices[0].message`. Make sure the deployed aiProxy matches this plugin version (see docs/deploy-aiproxy.md).", { code: "INVALID_FUNCTION_RESPONSE" });
     }
     const durationMs = Date.now() - startedAt;
     const totalTokens = completion.usage?.total_tokens;
@@ -697,7 +781,9 @@ function makeLogger(input) {
  */
 export const CloudbaseBridge = async (input = {}, options = {}) => {
     const log = makeLogger(input);
-    const magpieOptions = input?.magpie?.options;
+    const magpieOptions = isPlainObject(input?.magpie?.options) ? input.magpie.options : undefined;
+    const imageEnabled = () => input.magpie?.option?.(PROVIDER_ID, IMAGE_OPTION)
+        ?? (options.image_generation ?? magpieOptions?.[IMAGE_OPTION]) === true;
     const hooks = {
         config: async (cfg) => {
             cfg.provider ??= {};
@@ -707,14 +793,21 @@ export const CloudbaseBridge = async (input = {}, options = {}) => {
                 npm: "@ai-sdk/openai-compatible",
                 // loader.baseURL always overrides this; keep a harmless placeholder.
                 api: `https://placeholder${GATEWAY_SUFFIX_CN}/v1`,
-                models: Object.fromEntries(Object.entries(MODEL_CATALOG).map(([id, spec]) => [
-                    id,
-                    { ...modelEntry(spec), ...(spec.verified ? {} : { disabled: true }) },
-                ])),
+                models: { ...Object.fromEntries(Object.entries(MODEL_CATALOG).map(([id, spec]) => [
+                        id,
+                        { ...modelEntry(spec), ...(spec.verified ? {} : { disabled: true }) },
+                    ])), ...(imageEnabled() ? { [IMAGE_MODEL]: IMAGE_ENTRY } : {}) },
             };
         },
         auth: {
             provider: PROVIDER_ID,
+            options: [{
+                    key: IMAGE_OPTION,
+                    label: "启用 DSH 生图 / Image generation",
+                    description: "Send text prompts to the separate generateImage function. Each invocation can incur charges.",
+                    default: false,
+                    filtersModels: true,
+                }],
             methods: [
                 {
                     type: "api",
@@ -765,7 +858,7 @@ export const CloudbaseBridge = async (input = {}, options = {}) => {
                 if (cfg.gatewayBaseUrl) {
                     log("debug", "gatewayBaseUrl override active (testing only)");
                 }
-                const context = { cfg, log };
+                const context = { cfg, log, imageEnabled };
                 return {
                     baseURL: gatewayBase(cfg),
                     fetch: bridgeFetch.bind(context),
@@ -781,16 +874,19 @@ export const CloudbaseBridge = async (input = {}, options = {}) => {
              */
             async models(provider, ctx) {
                 const base = provider.models ?? {};
+                const fallback = () => withImageModel(base, imageEnabled(), base);
                 const cfg = resolveAccountConfig(ctx?.auth, options, magpieOptions);
                 if (!cfg)
-                    return base;
+                    return fallback();
                 try {
                     const ping = await invokePing(cfg);
                     const pingModels = Array.isArray(ping.models) ? ping.models.filter((m) => typeof m === "string") : [];
                     if (pingModels.length === 0)
-                        return base;
+                        return fallback();
                     const out = {};
                     for (const id of pingModels) {
+                        if (id === IMAGE_MODEL)
+                            continue;
                         const entry = base[id] ? { ...base[id] } : accountModelEntry(id, base);
                         // The deployed function's allowlist explicitly accepts this id
                         // (it just said so in the ping), so a static placeholder
@@ -799,12 +895,16 @@ export const CloudbaseBridge = async (input = {}, options = {}) => {
                         out[id] = entry;
                     }
                     log("info", `account model list refreshed from aiProxy: ${pingModels.length} model(s)`);
-                    return out;
+                    return withImageModel(out, imageEnabled(), base);
                 }
                 catch (error) {
                     const reason = error instanceof Error ? truncate(error.message, 160) : "unknown";
                     log("warn", `aiProxy ping failed, keeping static model list: ${reason}`);
-                    return base;
+                    const kept = fallback();
+                    // The host recognizes a fallback by identity or, for a changed map, by this symbol.
+                    if (kept !== base)
+                        Object.defineProperty(kept, Symbol.for("magpie.fellBack"), { value: true });
+                    return kept;
                 }
             },
         },

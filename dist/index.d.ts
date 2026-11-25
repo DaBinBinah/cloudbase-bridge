@@ -30,7 +30,7 @@
  * - `dist/` must be committed so the GitHub-topic discovery path can load
  *   the plugin straight from the repository.
  */
-export declare const PLUGIN_VERSION: "0.2.8";
+export declare const PLUGIN_VERSION: "0.2.9";
 /**
  * Model catalog (text chat models).
  *
@@ -48,8 +48,7 @@ export declare const PLUGIN_VERSION: "0.2.8";
  *   Official docs do not list `hy4-flash` yet; its 1M context follows the
  *   hy4 family — adjust if your console says otherwise.
  * - `hy-image-v3.5-preview` is an image-generation model and is NOT in this
- *   catalog: this bridge only does chat (generateText), with text and
- *   image input and text output.
+ *   chat catalog: the optional prompt-to-URL adapter routes separately.
  *
  * `verified` means "enabled by default", not "officially documented".
  * `image` follows the 图片 column of
@@ -91,19 +90,21 @@ interface PluginInput {
     project?: unknown;
     directory?: string;
     magpie?: {
-        options?: Json;
+        options?: Json | ((provider: string) => Json);
+        option?: (provider: string, key: string) => boolean;
     };
 }
 interface PluginOptions {
     envId?: string;
     functionName?: string;
+    image_generation?: boolean;
     region?: "cn" | "intl";
     timeoutMs?: number;
     gatewayBaseUrl?: string;
 }
 interface ChatCompletionsBody {
     model: unknown;
-    messages: unknown;
+    messages: unknown[];
     stream?: unknown;
     temperature?: unknown;
     top_p?: unknown;
@@ -129,7 +130,7 @@ declare function normalizeModel(raw: unknown): string | null;
 declare function isValidEnvId(envId: string): boolean;
 declare function isValidFunctionName(name: string): boolean;
 declare function gatewayBase(cfg: AccountConfig): string;
-declare function invokeUrl(cfg: AccountConfig): string;
+declare function invokeUrl(cfg: AccountConfig, name?: string): string;
 /**
  * Combine the agent's AbortSignal with our own timeout. Uses
  * AbortSignal.any when available (Bun and modern Node do), otherwise a
@@ -157,7 +158,7 @@ declare function mapGatewayError(status: number, body: {
     code?: string;
     message?: string;
     requestId?: string;
-}): Response;
+}, functionName?: string): Response;
 /**
  * Map an error envelope returned by aiProxy itself
  * ({ error: { code, message } } inside a 200 response).
@@ -203,6 +204,13 @@ export declare const CloudbaseBridge: (input?: PluginInput, options?: PluginOpti
     } & Json) => Promise<void>;
     auth: {
         provider: string;
+        options: {
+            key: string;
+            label: string;
+            description: string;
+            default: boolean;
+            filtersModels: boolean;
+        }[];
         methods: {
             type: string;
             label: string;
@@ -237,7 +245,7 @@ export declare const CloudbaseBridge: (input?: PluginInput, options?: PluginOpti
     };
 }>;
 export declare const _internal: {
-    PLUGIN_VERSION: "0.2.8";
+    PLUGIN_VERSION: "0.2.9";
     PROVIDER_ID: string;
     DEFAULT_FUNCTION_NAME: string;
     DEFAULT_TIMEOUT_MS: number;

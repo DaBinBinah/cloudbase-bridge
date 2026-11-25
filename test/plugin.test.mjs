@@ -454,7 +454,7 @@ test("gateway error codes map to statuses that keep Magpie failover sane", async
     ["FUNCTIONS_NOT_FOUND", 404, /deploy/i],
     ["PERMISSION_DENIED", 401, /API key/],
     ["EXCEED_AUTHORITY", 403, /security rules/i],
-    ["AI_CHANNEL_NOT_ALLOWED", 403, /SDK channels/i],
+    ["AI_CHANNEL_NOT_ALLOWED", 403, /invocation source/i],
     ["AI_MODEL_NOT_SUPPORTED", 404, /model/i],
     ["EXCEED_TOKEN_QUOTA_LIMIT", 429, /quota/i],
     ["FUNCTIONS_TIME_LIMIT_EXCEEDED", 504, /timeout/i],
@@ -767,16 +767,165 @@ test("provider.models refines the list from aiProxy ping; failures keep the stat
   const gwFail = mockGateway(async () => new Response(JSON.stringify({ code: "FUNCTIONS_NOT_FOUND", message: "x" }), { status: 404 }));
   try {
     const kept = await hooks.provider.models({ models: base }, { auth: fakeAuth() });
-    assert.deepEqual(kept, base);
+    assert.strictEqual(kept, base, "the host recognizes discovery fallback by reference");
   } finally {
     gwFail.restore();
   }
 
   const noAuth = await hooks.provider.models({ models: base }, {});
-  assert.deepEqual(noAuth, base);
+  assert.strictEqual(noAuth, base);
 });
 
 /* ---------------- privacy ---------------- */
+
+const IMAGE_MODEL = "cloudbase/hy-image-v3.5-preview";
+
+test("live image toggle updates fallback listings without mutating the startup catalog", async () => {
+  const imageId = IMAGE_MODEL.split("/")[1];
+  for (const initial of [true, false]) {
+    let enabled = initial;
+    const hooks = await CloudbaseBridge({ magpie: { option: () => enabled } });
+    const config = {};
+    await hooks.config(config);
+    const models = config.provider.cloudbase.models;
+    enabled = !enabled;
+    const assertToggle = map => {
+      assert.equal(Object.hasOwn(map, imageId), enabled);
+      assert.equal(Object.hasOwn(models, imageId), initial);
+      assert.equal(map.hy4, models.hy4);
+    };
+    assertToggle(await hooks.provider.models({ models }, {}));
+    for (const failed of [false, true]) {
+      const gw = mockGateway(async () => Response.json({ ok: true, models: [] }, { status: failed ? 500 : 200 }));
+      try {
+        const kept = await hooks.provider.models({ models }, { auth: fakeAuth() });
+        assertToggle(kept);
+        if (failed) assert.equal(kept[Symbol.for("magpie.fellBack")], true);
+      } finally { gw.restore(); }
+    }
+  }
+});
+
+test("image alias is opt-in, survives chat discovery and uses a separate function", async () => {
+  let enabled = true;
+  const hooks = await CloudbaseBridge({ magpie: { option: (p,k) => p === "cloudbase" && k === "image_generation" && enabled } });
+  const config = {};
+  await hooks.config(config);
+  const base = config.provider.cloudbase.models;
+  const imageId = IMAGE_MODEL.split("/")[1];
+  assert.deepEqual(base[imageId].modalities, { input: ["text"], output: ["text"] });
+  assert.equal(base[imageId].tool_call, false);
+  const url = "https://example.org/output.png?signature=one%2Btwo";
+  const gw = mockGateway(async (_, init) => {
+    const event = JSON.parse(init.body);
+    return Response.json(event.action === "ping" ? { ok: true, models: ["hy4"] } :
+      event.action === "chat" ? aiProxyCompletion("chat works") : { ok: true, url, width: 1024, height: 1024 });
+  });
+  try {
+    const refined = await hooks.provider.models({ models: base }, { auth: fakeAuth() });
+    assert.deepEqual(Object.keys(refined).sort(), [imageId, "hy4"].sort());
+    const doFetch = await loaderFetch(hooks);
+    for (const stream of [false, true]) {
+      const res = await doFetch(chatBody({ model: IMAGE_MODEL, stream, tools: [{}], messages: [
+        { role: "system", content: "do not forward" }, { role: "user", content: "old" },
+        { role: "assistant", content: "old URL" },
+        { role: "user", content: [{ type: "text", text: "画一只猫" }, { type: "text", text: "水彩风格" }] },
+      ] }));
+      assert.equal(res.status, 200);
+      const call = gw.calls.at(-1);
+      assert.match(call.url, /\/v1\/functions\/generateImage$/);
+      assert.equal(call.init.headers.authorization, `Bearer ${TEST_KEY}`);
+      assert.deepEqual(JSON.parse(call.init.body), { prompt: "画一只猫\n水彩风格" });
+      if (stream) {
+        const text = await res.text();
+        assert.ok(text.includes(url) && text.includes("data: [DONE]"));
+      } else {
+        const json = await res.json();
+        assert.equal(json.model, IMAGE_MODEL);
+        assert.deepEqual(json.choices[0].message, { role: "assistant", content: url });
+      }
+    }
+    assert.equal((await (await doFetch(chatBody({ model: "cloudbase/hy4" }))).json()).choices[0].message.content, "chat works");
+    assert.match(gw.calls.at(-1).url, /\/aiProxy$/);
+    enabled = false;
+    assert.equal((await doFetch(chatBody({ model: IMAGE_MODEL }))).status, 404);
+    enabled = true;
+    for (const last of [{ role: "tool", content: "do not replay" }, { role: "user", content: " " },
+      { role: "user", content: [{ type: "image_url", image_url: { url } }] }]) {
+      const res = await doFetch(chatBody({ model: IMAGE_MODEL, messages: [{ role: "user", content: "old" }, last] }));
+      assert.equal(res.status, 400);
+    }
+    assert.equal(gw.calls.length, 4);
+  } finally { gw.restore(); }
+});
+
+test("DSH title and runtime reminders never reach the image function", async () => {
+  const doFetch = await loaderFetch(await CloudbaseBridge({}, { image_generation: true }));
+  const system = content => ({ role: "system", content });
+  const user = content => ({ role: "user", content });
+  const title = [
+    system("Create a concise title for an AI coding-assistant session from the supplied human messages.\nReturn only the title."),
+    user('Generate the session title from this JSON array of human messages:\n[{"seq":8,"text":"橘猫"}]'),
+  ];
+  const agent = system("You are an AI agent powered by DeepSeek Harness.");
+  const reminder = user("<system-reminder>\nCurrent working directory: /private/workspace\n</system-reminder>");
+  const gw = mockGateway(async () => Response.json({ url: "https://example.org/cat.png" }));
+  const request = (messages, stream = false) => doFetch(chatBody({ model: IMAGE_MODEL, messages, stream }));
+  try {
+    assert.equal((await (await request(title)).json()).choices[0].message.content, "图片生成");
+    assert.match(await (await request(title, true)).text(), /data: \[DONE\]/);
+    assert.equal((await (await request([title[0], user('Update the session title from this JSON object:\n{}')])).json()).choices[0].message.content, "图片生成");
+    for (const last of [{ role: "assistant", content: "old URL" }, { role: "tool", content: "old result" },
+      user([{ type: "image_url", image_url: { url: "https://example.org/old" } }])]) {
+      assert.equal((await request([agent, user("old prompt"), last, reminder])).status, 400);
+    }
+    assert.equal((await request([agent, reminder])).status, 400);
+    assert.equal((await request([agent, user("画橘猫"), reminder, reminder])).status, 200);
+    assert.deepEqual(gw.calls.map(c => JSON.parse(c.init.body)), [{ prompt: "画橘猫" }]);
+  } finally { gw.restore(); }
+});
+
+test("DSH web clock is metadata, not the image prompt; ambiguous turns do not incur a call", async () => {
+  const doFetch = await loaderFetch(await CloudbaseBridge({}, { image_generation: true }));
+  const agent = { role: "system", content: "You are an AI agent powered by DeepSeek Harness." };
+  const user = content => ({ role: "user", content });
+  const clock = [
+    "Time sampled while preparing turn 1, step 1: 2026-11-25T22:39:26+08:00[Asia/Singapore]",
+    "Browser time zone for this request: Asia/Singapore. Interpret otherwise-unqualified dates and times in this zone.",
+    "Elapsed since the preceding model-visible message: unavailable.",
+  ].join("\n");
+  const reminder = user("<system-reminder>\nruntime context\n</system-reminder>");
+  const prompt = "画一只戴蓝色围巾的橘猫，水彩风格";
+  const call = (...tail) => doFetch(chatBody({ model: IMAGE_MODEL, messages: [agent, ...tail] }));
+  const gw = mockGateway(async () => Response.json({ url: "https://example.org/cat.png" }));
+  try {
+    assert.equal((await call(user(prompt), reminder, user(clock))).status, 200);
+    assert.equal((await call(user("old"), { role: "assistant", content: "done" },
+      user(prompt), user([{ type: "text", text: clock }]), reminder)).status, 200);
+    assert.equal((await call(user("old"), { role: "assistant", content: "done" }, user(clock))).status, 400);
+    assert.equal((await call(user(prompt), user("unknown injected text"), user(clock))).status, 400);
+    const literal = "画一张写着 Browser time zone for this request: Asia/Singapore 的海报";
+    assert.equal((await call(user(literal))).status, 200);
+    assert.deepEqual(gw.calls.map(c => JSON.parse(c.init.body).prompt), [prompt, prompt, literal]);
+  } finally { gw.restore(); }
+});
+
+test("image requests surface function errors, reject invalid image URLs and never fall back to chat", async () => {
+  const doFetch = await loaderFetch(await CloudbaseBridge({}, { image_generation: true }));
+  for (const [reply, status, code] of [
+    [{ ok: false, stage: "generate", code: "AI_CHANNEL_NOT_ALLOWED", message: "denied" }, 403, "AI_CHANNEL_NOT_ALLOWED"],
+    [{ ok: true, url: "javascript:alert(1)" }, 502, "INVALID_FUNCTION_RESPONSE"],
+    [{}, 502, "INVALID_FUNCTION_RESPONSE"],
+  ]) {
+    const gw = mockGateway(async () => Response.json(reply));
+    try {
+      const res = await doFetch(chatBody({ model: IMAGE_MODEL }));
+      assert.equal(res.status, status);
+      assert.equal((await res.json()).error.code, code);
+      assert.equal(gw.calls.length, 1);
+    } finally { gw.restore(); }
+  }
+});
 
 test("nothing in logs or error payloads contains the API key or message content", async () => {
   const { hooks, logs } = await makePlugin();
