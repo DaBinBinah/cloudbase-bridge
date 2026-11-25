@@ -157,6 +157,20 @@ function accountModelEntry(id: string, base: Record<string, Json>): Json {
   return entry;
 }
 
+function withImageModel(models: Record<string, Json>, enabled: boolean, base: Record<string, Json>): Record<string, Json> {
+  if (enabled === Object.hasOwn(models, IMAGE_MODEL)) return models;
+  if (!enabled) {
+    const { [IMAGE_MODEL]: _, ...chat } = models;
+    return chat;
+  }
+  const entry = base[IMAGE_MODEL] ?? accountModelEntry(IMAGE_MODEL, base);
+  const image = base[IMAGE_MODEL] ?? (isPlainObject(entry.capabilities)
+    ? { ...entry, name: IMAGE_ENTRY.name, capabilities: { ...entry.capabilities, toolcall: false,
+      input: { text: true, image: false }, output: { text: true, image: false } } }
+    : IMAGE_ENTRY);
+  return { ...models, [IMAGE_MODEL]: image };
+}
+
 /* ------------------------------------------------------------------ *
  * Minimal structural types (no runtime dependencies).                *
  * ------------------------------------------------------------------ */
@@ -1083,14 +1097,14 @@ export const CloudbaseBridge = async (
        * Magpie falls back gracefully, per the plugin docs.
        */
       async models(provider: { models?: Record<string, Json> }, ctx?: { auth?: AuthData }) {
-        // Magpie recognizes a failed refresh by this object's identity.
         const base = provider.models ?? {};
+        const fallback = () => withImageModel(base, imageEnabled(), base);
         const cfg = resolveAccountConfig(ctx?.auth, options, magpieOptions);
-        if (!cfg) return base;
+        if (!cfg) return fallback();
         try {
           const ping = await invokePing(cfg);
           const pingModels = Array.isArray(ping.models) ? ping.models.filter((m): m is string => typeof m === "string") : [];
-          if (pingModels.length === 0) return base;
+          if (pingModels.length === 0) return fallback();
           const out: Record<string, Json> = {};
           for (const id of pingModels) {
             if (id === IMAGE_MODEL) continue;
@@ -1101,19 +1115,15 @@ export const CloudbaseBridge = async (
             delete entry.disabled;
             out[id] = entry;
           }
-          if (imageEnabled()) {
-            const entry = base[IMAGE_MODEL] ?? accountModelEntry(IMAGE_MODEL, base);
-            out[IMAGE_MODEL] = base[IMAGE_MODEL] ?? (isPlainObject(entry.capabilities)
-              ? { ...entry, name: IMAGE_ENTRY.name, capabilities: { ...entry.capabilities, toolcall: false,
-                input: { text: true, image: false }, output: { text: true, image: false } } }
-              : IMAGE_ENTRY);
-          }
           log("info", `account model list refreshed from aiProxy: ${pingModels.length} model(s)`);
-          return out;
+          return withImageModel(out, imageEnabled(), base);
         } catch (error) {
           const reason = error instanceof Error ? truncate(error.message, 160) : "unknown";
           log("warn", `aiProxy ping failed, keeping static model list: ${reason}`);
-          return base;
+          const kept = fallback();
+          // The host recognizes a fallback by identity or, for a changed map, by this symbol.
+          if (kept !== base) Object.defineProperty(kept, Symbol.for("magpie.fellBack"), { value: true });
+          return kept;
         }
       },
     },

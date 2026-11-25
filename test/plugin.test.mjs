@@ -780,6 +780,32 @@ test("provider.models refines the list from aiProxy ping; failures keep the stat
 
 const IMAGE_MODEL = "cloudbase/hy-image-v3.5-preview";
 
+test("live image toggle updates fallback listings without mutating the startup catalog", async () => {
+  const imageId = IMAGE_MODEL.split("/")[1];
+  for (const initial of [true, false]) {
+    let enabled = initial;
+    const hooks = await CloudbaseBridge({ magpie: { option: () => enabled } });
+    const config = {};
+    await hooks.config(config);
+    const models = config.provider.cloudbase.models;
+    enabled = !enabled;
+    const assertToggle = map => {
+      assert.equal(Object.hasOwn(map, imageId), enabled);
+      assert.equal(Object.hasOwn(models, imageId), initial);
+      assert.equal(map.hy4, models.hy4);
+    };
+    assertToggle(await hooks.provider.models({ models }, {}));
+    for (const failed of [false, true]) {
+      const gw = mockGateway(async () => Response.json({ ok: true, models: [] }, { status: failed ? 500 : 200 }));
+      try {
+        const kept = await hooks.provider.models({ models }, { auth: fakeAuth() });
+        assertToggle(kept);
+        if (failed) assert.equal(kept[Symbol.for("magpie.fellBack")], true);
+      } finally { gw.restore(); }
+    }
+  }
+});
+
 test("image alias is opt-in, survives chat discovery and uses a separate function", async () => {
   let enabled = true;
   const hooks = await CloudbaseBridge({ magpie: { option: (p,k) => p === "cloudbase" && k === "image_generation" && enabled } });
