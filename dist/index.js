@@ -34,7 +34,7 @@
  * Version & constants (single source of truth; no imports allowed —  *
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
-export const PLUGIN_VERSION = "0.2.9";
+export const PLUGIN_VERSION = "0.2.10-preview.1";
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
 const PROVIDER_ID = "cloudbase";
@@ -385,9 +385,11 @@ function isDshContext(prompt) {
         return true;
     return /^Time sampled while preparing turn \d+, step \d+: .+\r?\nBrowser time zone for this request: .+\r?\nElapsed since the preceding (?:model-visible message|step context): .+\.$/.test(prompt);
 }
-function imageEvent(messages) {
-    const dsh = messages.some(m => isPlainObject(m) && m.role === "system" && textContent(m.content)
+function isDshConversation(messages) {
+    return messages.some(m => isPlainObject(m) && m.role === "system" && textContent(m.content)
         .includes("You are an AI agent powered by DeepSeek Harness."));
+}
+function imageEvent(messages, dsh) {
     let candidate = "";
     for (let i = messages.length - 1; i >= 0; --i) {
         const m = messages[i];
@@ -405,7 +407,7 @@ function imageEvent(messages) {
     }
     return candidate ? { prompt: candidate } : null;
 }
-function imageCompletion(result) {
+function imageCompletion(result, dsh) {
     if (!isPlainObject(result) || typeof result.url !== "string" || !/^https:\/\/[^\s]+$/i.test(result.url))
         return null;
     try {
@@ -416,7 +418,15 @@ function imageCompletion(result) {
     catch {
         return null;
     }
-    return normalizeCompletion({ choices: [{ message: { content: result.url }, finish_reason: "stop" }] });
+    let content = result.url;
+    if (dsh) {
+        // Keep the signed URL intact after Markdown decodes the angle-bracket destination.
+        if (/[<>\\\u0000-\u001f\u007f]/u.test(content))
+            return null;
+        const destination = `<${content.replaceAll("&", "&amp;")}>`;
+        content = `![生成的图片](${destination})\n\n[打开原图](${destination})`;
+    }
+    return normalizeCompletion({ choices: [{ message: { content }, finish_reason: "stop" }] });
 }
 function isJsonObjectText(text) {
     try {
@@ -661,7 +671,8 @@ async function bridgeFetch(input, init) {
         return stream ? sseResponse(title, rawModel) : jsonCompletionResponse(title, rawModel);
     }
     const functionName = isImage ? IMAGE_FUNCTION : cfg.functionName;
-    const event = isImage ? imageEvent(body.messages) : buildInvokeEvent(body, model);
+    const dshImage = isImage && isDshConversation(body.messages);
+    const event = isImage ? imageEvent(body.messages, dshImage) : buildInvokeEvent(body, model);
     if (!event)
         return errorResponse(400, "Image generation expects one unambiguous, non-empty text-only user prompt in the current turn.", { code: "INVALID_IMAGE_PROMPT" });
     const payload = JSON.stringify(event);
@@ -728,7 +739,7 @@ async function bridgeFetch(input, init) {
     if (isImage && isPlainObject(functionResult) && functionResult.ok === false) {
         return mapFunctionError(functionResult, upstream.headers.get("x-request-id") ?? undefined);
     }
-    const completion = isImage ? imageCompletion(functionResult) : normalizeCompletion(functionResult);
+    const completion = isImage ? imageCompletion(functionResult, dshImage) : normalizeCompletion(functionResult);
     if (!completion) {
         log("error", `${functionName} returned an unexpected response`);
         return errorResponse(502, isImage ? `${functionName} did not return an HTTPS image URL.` : "aiProxy reply is missing `choices[0].message`. Make sure the deployed aiProxy matches this plugin version (see docs/deploy-aiproxy.md).", { code: "INVALID_FUNCTION_RESPONSE" });

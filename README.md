@@ -39,7 +39,7 @@ Availability and billing depend on the environment. Under the [official source r
 
 1. For image generation only, create a separate event function named `generateImage` in the same environment (Node.js 20, entry point `index.main`), then upload the [ZIP with dependencies](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/v0.2.9/generateImage-with-deps.zip) and deploy directly. Do **not** overwrite `aiProxy` or change the login's function name.
 2. Enable **Image generation** in the Magpie plugin options. In DSH select `cloudbase/hy-image-v3.5-preview` and send a text prompt.
-3. Open the returned HTTPS link to see the image; download it before the link expires. Each prompt requests a new image; history, reference images and tools are not sent. Avoid automatic routing, background tasks and model tests here: each invocation can incur charges.
+3. In this preview, new DSH web replies show the image inline with an **打开原图** (open original) link. Previous replies are unchanged and non-DSH clients still receive the bare HTTPS URL. Download the image before the link expires. Each prompt requests a new image; history, reference images and tools are not sent. Avoid automatic routing, background tasks and model tests here: each invocation can incur charges.
 
 ## What you need
 

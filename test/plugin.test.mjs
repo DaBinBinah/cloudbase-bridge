@@ -859,6 +859,28 @@ test("image alias is opt-in, survives chat discovery and uses a separate functio
   } finally { gw.restore(); }
 });
 
+test("DSH image replies carry one inline image and its original link in JSON and SSE", async () => {
+  const fetchChat = await loaderFetch(await CloudbaseBridge({}, { image_generation: true }));
+  const messages = [{ role: "system", content: "You are an AI agent powered by DeepSeek Harness." },
+    { role: "user", content: "画猫" }];
+  let url = "https://example.org/cat(1).png?q-key-time=123;456&q-signature=a%2Bb%3D&copy;=1";
+  const destination = "<https://example.org/cat(1).png?q-key-time=123;456&amp;q-signature=a%2Bb%3D&amp;copy;=1>";
+  const markdown = `![生成的图片](${destination})\n\n[打开原图](${destination})`;
+  const gw = mockGateway(async () => Response.json({ url }));
+  const request = stream => fetchChat(chatBody({ model: IMAGE_MODEL, messages, stream }));
+  try {
+    assert.equal((await (await request(false)).json()).choices[0].message.content, markdown);
+    const frames = (await (await request(true)).text()).split("\n").filter(line => line.startsWith("data: "));
+    assert.equal(frames.pop(), "data: [DONE]");
+    assert.equal(frames.map(line => JSON.parse(line.slice(6)).choices[0].delta.content ?? "").join(""), markdown);
+    for (url of ["https://example.org/a>.png", "https://example.org/a\\b", "https://example.org/a\u0001x"]) {
+      assert.equal((await request(false)).status, 502);
+    }
+    assert.ok(gw.calls.every(c => c.url.endsWith("/v1/functions/generateImage")));
+    assert.equal(gw.calls.length, 5);
+  } finally { gw.restore(); }
+});
+
 test("DSH title and runtime reminders never reach the image function", async () => {
   const doFetch = await loaderFetch(await CloudbaseBridge({}, { image_generation: true }));
   const system = content => ({ role: "system", content });

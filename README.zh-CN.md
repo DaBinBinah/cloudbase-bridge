@@ -39,7 +39,7 @@ Agent ─► magpie 网关 ─► 插件 ── POST /v1/functions/aiProxy ─�
 
 1. 只有需要生图时，才在同一环境新建独立的普通云函数 `generateImage`（Node.js 20，入口 `index.main`），上传[含依赖的 ZIP](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/v0.2.9/generateImage-with-deps.zip) 并直接部署。**不要覆盖 `aiProxy`**，也不要改 Magpie 登录配置里的聊天函数名。
 2. 在 Magpie 插件选项中打开「启用 DSH 生图」，在 DSH 选择 `cloudbase/hy-image-v3.5-preview`，输入文字提示词。
-3. 点击回复里的 HTTPS 链接看图，想保留就在链接过期前下载。每个新提示词单独生成一张图，不传聊天历史、参考图或工具。不要把此模型用于自动路由、后台任务或「测试模型」，每次调用都可能产生生图费用。
+3. 在此测试版中，DSH 网页版的新回复直接显示图片，也可点「打开原图」另存。以前的回复不会改变，非 DSH 客户端仍收到原始 HTTPS 链接。想保留就在链接过期前下载。每个新提示词单独生成一张图，不传聊天历史、参考图或工具。不要把此模型用于自动路由、后台任务或「测试模型」，每次调用都可能产生生图费用。
 
 ## 准备工作
 
