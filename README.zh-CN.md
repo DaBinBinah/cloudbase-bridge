@@ -37,9 +37,13 @@ Agent ─► magpie 网关 ─► 插件 ── POST /v1/functions/aiProxy ─�
 
 **DSH 生图（插件 0.2.9 起支持，默认关闭）：** 只用聊天的用户，包括仍在用 0.2.4 的用户，都不用改配置、升级插件或重新部署。
 
-1. 只有需要生图时，才在同一环境新建独立的普通云函数 `generateImage`（Node.js 20，入口 `index.main`），上传[含依赖的 ZIP](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/v0.2.9/generateImage-with-deps.zip) 并直接部署。**不要覆盖 `aiProxy`**，也不要改 Magpie 登录配置里的聊天函数名。
+1. 只有需要生图时，才在同一环境新建独立的普通云函数 `generateImage`（Node.js 20，入口 `index.main`，建议超时 600 秒），上传[含依赖的 ZIP](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/v0.2.10/generateImage-with-deps.zip) 并直接部署。**不要覆盖 `aiProxy`**，也不要改 Magpie 登录配置里的聊天函数名。
 2. 在 Magpie 插件选项中打开「启用 DSH 生图」，在 DSH 选择 `cloudbase/hy-image-v3.5-preview`，输入文字提示词。
-3. 点击回复里的 HTTPS 链接看图，想保留就在链接过期前下载。每个新提示词单独生成一张图，不传聊天历史、参考图或工具。不要把此模型用于自动路由、后台任务或「测试模型」，每次调用都可能产生生图费用。
+3. 从 0.2.10 起，DSH 网页版的新回复直接显示图片，也可点「打开原图」另存。如果仍只看到网址，打开 Magpie 插件选项「始终显示图片预览」并保存；即使请求不带 DSH 标记，插件也会返回 Markdown 图片。此开关影响所有经该配置生图的客户端，不改变聊天或旧回复。需要原始 HTTPS 链接的非 DSH 客户端请保持此项关闭。
+
+**生图标识（可选）：** 在 `generateImage` 的环境变量中设置 `IMAGE_FOOTNOTE_MODE`：`empty`（默认）传空字符串，`space` 传一个半角空格，`omit` 不传字段，可恢复 0.2.9 的行为。保存后用测试事件 `{"action":"check"}` 查看 `footnoteMode`；自检不调用模型。本次实测中，`empty` 的新原图右下角有「AI生成」，`space` 的新原图没有可见文字。[CloudBase 文档](https://docs.cloudbase.net/ai/image-model/custom-watermark)只定义了自定义水印，不保证空格的效果；发布或分享时仍须遵守[生成内容标识要求](https://cloud.tencent.com/document/product/301/97822)。仅升级图片预览不用重新部署函数。
+
+想保留图片就在链接过期前下载。每个新提示词单独生成一张图，不传聊天历史、参考图或工具。不要把此模型用于自动路由、后台任务或「测试模型」，每次调用都可能产生生图费用。
 
 ## 准备工作
 

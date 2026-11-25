@@ -37,9 +37,13 @@ Availability and billing depend on the environment. Under the [official source r
 
 **DSH image generation (off by default, plugin 0.2.9+):** Chat-only users, including those on 0.2.4, don't need to change anything.
 
-1. For image generation only, create a separate event function named `generateImage` in the same environment (Node.js 20, entry point `index.main`), then upload the [ZIP with dependencies](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/v0.2.9/generateImage-with-deps.zip) and deploy directly. Do **not** overwrite `aiProxy` or change the login's function name.
+1. For image generation only, create a separate event function named `generateImage` in the same environment (Node.js 20, entry point `index.main`, recommended timeout 600 seconds), then upload the [ZIP with dependencies](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/v0.2.10/generateImage-with-deps.zip) and deploy directly. Do **not** overwrite `aiProxy` or change the login's function name.
 2. Enable **Image generation** in the Magpie plugin options. In DSH select `cloudbase/hy-image-v3.5-preview` and send a text prompt.
-3. Open the returned HTTPS link to see the image; download it before the link expires. Each prompt requests a new image; history, reference images and tools are not sent. Avoid automatic routing, background tasks and model tests here: each invocation can incur charges.
+3. From 0.2.10, new DSH web replies show the image inline with an **打开原图** (open original) link. If you still get a bare URL, enable **Always show image previews** in Magpie and save. This requests Markdown for all image clients using that configuration, even without a DSH identifier. It doesn't change chat or previous replies. Leave it off for non-DSH clients expecting a bare HTTPS URL.
+
+**Optional image labeling:** Set `IMAGE_FOOTNOTE_MODE` on `generateImage`: `empty` (default) sends an empty string, `space` sends one space, and `omit` leaves out the field as in 0.2.9. After saving, test with `{"action":"check"}` to read `footnoteMode` without calling the model. In live tests, new originals had a visible AI label with `empty`, but not with `space`. [CloudBase documents custom labels](https://docs.cloudbase.net/ai/image-model/custom-watermark), not a guaranteed opt-out. Follow the [content-labeling terms](https://cloud.tencent.com/document/product/301/97822) when distributing images. No function redeployment is needed for inline previews alone.
+
+Download the image before the link expires. Each prompt requests a new image; history, reference images and tools are not sent. Avoid automatic routing, background tasks and model tests here: each invocation can incur charges.
 
 ## What you need
 

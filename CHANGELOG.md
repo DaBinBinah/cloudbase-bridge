@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [SemVer](https://semver.org/).
 
+## [0.2.10] - 2026-11-25
+
+- DSH web image replies now show an inline preview and an **打开原图**
+  link. Enable **Always show image previews** if the gateway strips DSH
+  markers. Other clients still receive a bare URL by default.
+- The separate `generateImage` release ZIP supports `IMAGE_FOOTNOTE_MODE`
+  (`empty`, `space`, `omit`) and a non-generating `{"action":"check"}`.
+  Image generation remains opt-in; chat and `aiProxy` are unchanged.
+
 ## [0.2.9] - 2026-11-25
 
 - Optional DSH text-to-image: enable **Image generation**, select

@@ -859,6 +859,28 @@ test("image alias is opt-in, survives chat discovery and uses a separate functio
   } finally { gw.restore(); }
 });
 
+test("DSH image replies carry one inline image and its original link in JSON and SSE", async () => {
+  const fetchChat = await loaderFetch(await CloudbaseBridge({}, { image_generation: true }));
+  const messages = [{ role: "system", content: "You are an AI agent powered by DeepSeek Harness." },
+    { role: "user", content: "画猫" }];
+  let url = "https://example.org/cat(1).png?q-key-time=123;456&q-signature=a%2Bb%3D&copy;=1";
+  const destination = "<https://example.org/cat(1).png?q-key-time=123;456&amp;q-signature=a%2Bb%3D&amp;copy;=1>";
+  const markdown = `![生成的图片](${destination})\n\n[打开原图](${destination})`;
+  const gw = mockGateway(async () => Response.json({ url }));
+  const request = stream => fetchChat(chatBody({ model: IMAGE_MODEL, messages, stream }));
+  try {
+    assert.equal((await (await request(false)).json()).choices[0].message.content, markdown);
+    const frames = (await (await request(true)).text()).split("\n").filter(line => line.startsWith("data: "));
+    assert.equal(frames.pop(), "data: [DONE]");
+    assert.equal(frames.map(line => JSON.parse(line.slice(6)).choices[0].delta.content ?? "").join(""), markdown);
+    for (url of ["https://example.org/a>.png", "https://example.org/a\\b", "https://example.org/a\u0001x"]) {
+      assert.equal((await request(false)).status, 502);
+    }
+    assert.ok(gw.calls.every(c => c.url.endsWith("/v1/functions/generateImage")));
+    assert.equal(gw.calls.length, 5);
+  } finally { gw.restore(); }
+});
+
 test("DSH title and runtime reminders never reach the image function", async () => {
   const doFetch = await loaderFetch(await CloudbaseBridge({}, { image_generation: true }));
   const system = content => ({ role: "system", content });
@@ -873,6 +895,7 @@ test("DSH title and runtime reminders never reach the image function", async () 
   const request = (messages, stream = false) => doFetch(chatBody({ model: IMAGE_MODEL, messages, stream }));
   try {
     assert.equal((await (await request(title)).json()).choices[0].message.content, "图片生成");
+    assert.equal((await (await request([{ ...title[0], role: "developer" }, title[1]])).json()).choices[0].message.content, "图片生成");
     assert.match(await (await request(title, true)).text(), /data: \[DONE\]/);
     assert.equal((await (await request([title[0], user('Update the session title from this JSON object:\n{}')])).json()).choices[0].message.content, "图片生成");
     for (const last of [{ role: "assistant", content: "old URL" }, { role: "tool", content: "old result" },
@@ -882,6 +905,48 @@ test("DSH title and runtime reminders never reach the image function", async () 
     assert.equal((await request([agent, reminder])).status, 400);
     assert.equal((await request([agent, user("画橘猫"), reminder, reminder])).status, 200);
     assert.deepEqual(gw.calls.map(c => JSON.parse(c.init.body)), [{ prompt: "画橘猫" }]);
+  } finally { gw.restore(); }
+});
+
+test("markerless DSH runtime context selects previews without replacing the human prompt", async () => {
+  const doFetch = await loaderFetch(await CloudbaseBridge({}, { image_generation: true }));
+  const user = content => ({ role: "user", content });
+  const ask = user("画橘猫");
+  const clock = user("Time sampled while preparing turn 1, step 1: 2026-11-25T23:04:35+08:00[Asia/Singapore]\nBrowser time zone for this request: unavailable.\nElapsed since the preceding model-visible message: unavailable.");
+  const snapshot = user("<system-reminder>\nThe following information describes your current session:\n\nCurrent DSH file policy: test\n</system-reminder>");
+  const gw = mockGateway(async () => Response.json({ url: "https://example.org/cat.png" }));
+  const call = async messages => (await (await doFetch(chatBody({ model: IMAGE_MODEL, messages }))).json()).choices[0].message.content;
+  try {
+    for (const messages of [[ask, clock], [ask, snapshot], [ask, snapshot, clock],
+      [ask, clock, { role: "assistant", content: "previous response" }, ask],
+      [{ role: "developer", content: "You are an AI agent powered by DeepSeek Harness." }, ask]]) {
+      assert.match(await call(messages), /\[打开原图\]/);
+    }
+    assert.ok(gw.calls.every(c => JSON.parse(c.init.body).prompt === "画橘猫"));
+    assert.equal(await call([ask]), "https://example.org/cat.png");
+    const n = gw.calls.length;
+    for (const metadata of [clock, snapshot]) {
+      assert.equal((await doFetch(chatBody({ model: IMAGE_MODEL, messages: [metadata] }))).status, 400);
+    }
+    assert.equal(gw.calls.length, n);
+  } finally { gw.restore(); }
+});
+
+test("explicit preview toggle works without any client marker but does not enable the image model", async () => {
+  let generate = false, inline = true;
+  const hooks = await CloudbaseBridge({ magpie: { option: (_, k) => k === "image_generation" ? generate : inline } });
+  assert.equal(hooks.auth.options.find(o => o.key === "image_inline_preview").default, false);
+  const doFetch = await loaderFetch(hooks);
+  const call = () => doFetch(chatBody({ model: IMAGE_MODEL }));
+  const gw = mockGateway(async () => Response.json({ url: "https://example.org/cat.png" }));
+  try {
+    assert.equal((await call()).status, 404);
+    assert.equal(gw.calls.length, 0);
+    generate = true;
+    assert.match((await (await call()).json()).choices[0].message.content, /\[打开原图\]/);
+    inline = false;
+    assert.equal((await (await call()).json()).choices[0].message.content, "https://example.org/cat.png");
+    assert.deepEqual(gw.calls.map(c => JSON.parse(c.init.body)), [{ prompt: "hi" }, { prompt: "hi" }]);
   } finally { gw.restore(); }
 });
 
