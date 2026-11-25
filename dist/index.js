@@ -34,7 +34,7 @@
  * Version & constants (single source of truth; no imports allowed —  *
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
-export const PLUGIN_VERSION = "0.2.9-image.1";
+export const PLUGIN_VERSION = "0.2.9-image.2";
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
 const PROVIDER_ID = "cloudbase";
@@ -368,15 +368,32 @@ function buildInvokeEvent(body, model) {
     }
     return event;
 }
-function imageEvent(messages) {
-    const last = Array.isArray(messages) ? messages.at(-1) : null;
-    if (!isPlainObject(last) || last.role !== "user")
-        return null;
-    const content = last.content;
-    const prompt = typeof content === "string" ? content.trim()
+function textContent(content) {
+    return typeof content === "string" ? content.trim()
         : Array.isArray(content) && content.every(part => isPlainObject(part) && part.type === "text" && typeof part.text === "string")
             ? content.map(part => part.text).join("\n").trim() : "";
-    return prompt ? { prompt } : null;
+}
+function isDshTitleRequest(messages) {
+    const last = messages.at(-1);
+    return isPlainObject(last) && last.role === "user" && textContent(last.content)
+        .startsWith("Generate the session title from this JSON array of human messages:") &&
+        messages.some(m => isPlainObject(m) && m.role === "system" && textContent(m.content)
+            .includes("Create a concise title for an AI coding-assistant session from the supplied human messages."));
+}
+function imageEvent(messages) {
+    const dsh = messages.some(m => isPlainObject(m) && m.role === "system" && textContent(m.content)
+        .includes("You are an AI agent powered by DeepSeek Harness."));
+    for (let i = messages.length - 1; i >= 0; --i) {
+        const m = messages[i];
+        if (!isPlainObject(m) || m.role !== "user")
+            break;
+        const prompt = textContent(m.content);
+        // DSH appends runtime context as separate user turns after the human prompt.
+        if (dsh && prompt.startsWith("<system-reminder>") && prompt.endsWith("</system-reminder>"))
+            continue;
+        return prompt ? { prompt } : null;
+    }
+    return null;
 }
 function imageCompletion(result) {
     if (!isPlainObject(result) || typeof result.url !== "string" || !/^https:\/\/[^\s]+$/i.test(result.url))
@@ -628,6 +645,11 @@ async function bridgeFetch(input, init) {
         return errorResponse(404, `Model "${truncate(model, 64)}" is not in the CloudBase Bridge catalog. Known models: ${known}.`, { code: "MODEL_NOT_ALLOWED" });
     }
     const stream = body.stream === true;
+    if (isImage && isDshTitleRequest(body.messages)) {
+        // A DSH session-title request must never invoke a billable image model.
+        const title = normalizeCompletion({ choices: [{ message: { content: "图片生成" } }] });
+        return stream ? sseResponse(title, rawModel) : jsonCompletionResponse(title, rawModel);
+    }
     const functionName = isImage ? IMAGE_FUNCTION : cfg.functionName;
     const event = isImage ? imageEvent(body.messages) : buildInvokeEvent(body, model);
     if (!event)

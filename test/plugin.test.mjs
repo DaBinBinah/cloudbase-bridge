@@ -859,6 +859,31 @@ test("image alias is opt-in, survives chat discovery and uses a separate functio
   } finally { gw.restore(); }
 });
 
+test("DSH title and runtime reminders never reach the image function", async () => {
+  const doFetch = await loaderFetch(await CloudbaseBridge({}, { image_generation: true }));
+  const system = content => ({ role: "system", content });
+  const user = content => ({ role: "user", content });
+  const title = [
+    system("Create a concise title for an AI coding-assistant session from the supplied human messages.\nReturn only the title."),
+    user('Generate the session title from this JSON array of human messages:\n[{"seq":8,"text":"橘猫"}]'),
+  ];
+  const agent = system("You are an AI agent powered by DeepSeek Harness.");
+  const reminder = user("<system-reminder>\nCurrent working directory: /private/workspace\n</system-reminder>");
+  const gw = mockGateway(async () => Response.json({ url: "https://example.org/cat.png" }));
+  const request = (messages, stream = false) => doFetch(chatBody({ model: IMAGE_MODEL, messages, stream }));
+  try {
+    assert.equal((await (await request(title)).json()).choices[0].message.content, "图片生成");
+    assert.match(await (await request(title, true)).text(), /data: \[DONE\]/);
+    for (const last of [{ role: "assistant", content: "old URL" }, { role: "tool", content: "old result" },
+      user([{ type: "image_url", image_url: { url: "https://example.org/old" } }])]) {
+      assert.equal((await request([agent, user("old prompt"), last, reminder])).status, 400);
+    }
+    assert.equal((await request([agent, reminder])).status, 400);
+    assert.equal((await request([agent, user("画橘猫"), reminder, reminder])).status, 200);
+    assert.deepEqual(gw.calls.map(c => JSON.parse(c.init.body)), [{ prompt: "画橘猫" }]);
+  } finally { gw.restore(); }
+});
+
 test("image requests surface function errors, reject invalid image URLs and never fall back to chat", async () => {
   const doFetch = await loaderFetch(await CloudbaseBridge({}, { image_generation: true }));
   for (const [reply, status, code] of [
