@@ -767,13 +767,13 @@ test("provider.models refines the list from aiProxy ping; failures keep the stat
   const gwFail = mockGateway(async () => new Response(JSON.stringify({ code: "FUNCTIONS_NOT_FOUND", message: "x" }), { status: 404 }));
   try {
     const kept = await hooks.provider.models({ models: base }, { auth: fakeAuth() });
-    assert.deepEqual(kept, base);
+    assert.strictEqual(kept, base, "the host recognizes discovery fallback by reference");
   } finally {
     gwFail.restore();
   }
 
   const noAuth = await hooks.provider.models({ models: base }, {});
-  assert.deepEqual(noAuth, base);
+  assert.strictEqual(noAuth, base);
 });
 
 /* ---------------- privacy ---------------- */

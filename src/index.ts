@@ -1083,15 +1083,8 @@ export const CloudbaseBridge = async (
        * Magpie falls back gracefully, per the plugin docs.
        */
       async models(provider: { models?: Record<string, Json> }, ctx?: { auth?: AuthData }) {
-        const base = { ...provider.models };
-        if (!imageEnabled()) delete base[IMAGE_MODEL];
-        else if (!base[IMAGE_MODEL]) {
-          const entry = accountModelEntry(IMAGE_MODEL, base);
-          base[IMAGE_MODEL] = isPlainObject(entry.capabilities)
-            ? { ...entry, name: IMAGE_ENTRY.name, capabilities: { ...entry.capabilities, toolcall: false,
-              input: { text: true, image: false }, output: { text: true, image: false } } }
-            : IMAGE_ENTRY;
-        }
+        // Magpie recognizes a failed refresh by this object's identity.
+        const base = provider.models ?? {};
         const cfg = resolveAccountConfig(ctx?.auth, options, magpieOptions);
         if (!cfg) return base;
         try {
@@ -1108,7 +1101,13 @@ export const CloudbaseBridge = async (
             delete entry.disabled;
             out[id] = entry;
           }
-          if (base[IMAGE_MODEL]) out[IMAGE_MODEL] = base[IMAGE_MODEL];
+          if (imageEnabled()) {
+            const entry = base[IMAGE_MODEL] ?? accountModelEntry(IMAGE_MODEL, base);
+            out[IMAGE_MODEL] = base[IMAGE_MODEL] ?? (isPlainObject(entry.capabilities)
+              ? { ...entry, name: IMAGE_ENTRY.name, capabilities: { ...entry.capabilities, toolcall: false,
+                input: { text: true, image: false }, output: { text: true, image: false } } }
+              : IMAGE_ENTRY);
+          }
           log("info", `account model list refreshed from aiProxy: ${pingModels.length} model(s)`);
           return out;
         } catch (error) {
