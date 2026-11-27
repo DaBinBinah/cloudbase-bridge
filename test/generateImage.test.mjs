@@ -75,6 +75,8 @@ for (const [prompt, size] of [
   ["Poster text:\n4K", "1024x1024"],
   ["Draw a clock,\n4K, 5:2", "3840x1536"],
   ["A cat\nResolution: 4K\naspect ratio 5:2", "3840x1536"],
+  ["A cat, 4K. Keep the background plain.", "4096x4096"],
+  ["Draw a sign, 4K.TV, then a cat", "1024x1024"],
   ["画猫\r\n分辨率：2K", "2048x2048"],
   ["画一个标签，24K，重2kg", "1024x1024"],
   ["画一只在晒太阳的猫，５：２", "1600x640"],
@@ -123,5 +125,6 @@ test("generateImage rejects unrepresentable ratios without calling the model", a
 test("conflicting resolution options do not submit an image", async () => {
   const { main, calls } = fixture();
   assert.equal((await main({ prompt: "A cat, 2K, 4K" })).code, "INVALID_RESOLUTION");
+  assert.equal((await main({ prompt: "A cat, 4K. A landscape, 2K." })).code, "INVALID_RESOLUTION");
   assert.equal(calls.length, 0);
 });
