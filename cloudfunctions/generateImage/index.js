@@ -1,14 +1,45 @@
 "use strict";
 
+function trailingCanvasRatio(text) {
+  const suffix = /[,;、\n]\s*([1-9]\d{0,3})\s*[:∶比]\s*([1-9]\d{0,3})\s*[。.!?]?$/.exec(text);
+  if (!suffix) return null;
+  // A bare ratio after a score, clock or scale description can be part of the subject.
+  const sentence = text.slice(0, suffix.index).split(/[;。!?\n]|\.(?=\s|$)/u).at(-1);
+  return /比分|计分|记分|时[钟间刻]|钟[表面]|比例尺|模型比例|\b(?:scores?|scoreboards?|clocks?|time|scales?)\b/iu.test(sentence) ? null : suffix;
+}
+
 function requestedSize(prompt) {
-  const text = prompt.normalize("NFKC").trim();
+  const tiers = new Set();
+  function takeTier(_, prefix, tier) {
+    tiers.add(Number(tier));
+    return prefix;
+  }
+  // A bare tier must occupy a list field; on its own line require a label to distinguish poster copy.
+  const withoutTier = prompt.normalize("NFKC").trim().replace(/(?:[^.,;、。!?]|\.(?=[^\s.,;、。!?]))+/gu, (field, start, input) => {
+    if (start === 0 || /[,;、]/u.test(input[start - 1]) || /[,;、]/u.test(input[start + field.length])) {
+      field = field.replace(/^(\s*)([24])k(?=\s*$)/iu, takeTier);
+    }
+    return field.replace(/^([^\S\r\n]*)(?:分辨率|resolution)[^\S\r\n]*(?:[:=为是][^\S\r\n]*)?([24])k(?=[^\S\r\n]*$)/gimu, takeTier);
+  });
+  if (tiers.size > 1) return { code: "INVALID_RESOLUTION", error: "请只指定一种输出分辨率：2K 或 4K。" };
+  const [tier] = tiers;
+  const text = tier ? withoutTier.replace(/[\s,;、。.!?]+$/u, "") : withoutTier;
   const ratio = /(?:宽高比(?:例)?|长宽比(?:例)?|横纵比|画幅(?:比例)?|(?:画布|图片|图像|海报)比例|aspect\s+ratio\b|--ar\b)\s*(?:为|是|设为|设置为|of|is|=|:)?\s*(\d{1,4})\s*[:∶比]\s*(\d{1,4})(?!\d|[.:∶]\s*\d)/iu.exec(text)
     ?? /(?<![\d.:∶])(\d{1,4})\s*[:∶比]\s*(\d{1,4})\s*(?:的\s*)?(?:宽高比|长宽比|画幅|横幅|竖幅|横版|竖版|海报|画布|图片|(?:aspect\s+ratio|banner|poster|canvas|image)\b)/iu.exec(text)
     ?? /(?:^|[,;。!?\n])\s*比例\s*(?:为|是|[:=])?\s*(\d{1,4})\s*[:∶比]\s*(\d{1,4})\s*(?=$|[,;。!?\n]|\.(?!\d))/u.exec(text)
-    ?? /^(\d{1,4})\s*[:∶比]\s*(\d{1,4})$/u.exec(text);
-  if (!ratio) return { size: "1024x1024" };
+    ?? /^(\d{1,4})\s*[:∶比]\s*(\d{1,4})\s*[。.!?]?$/u.exec(text)
+    ?? trailingCanvasRatio(text);
+  const square = (tier ?? 1) * 1024;
+  if (!ratio) return { size: `${square}x${square}` };
   let w = Number(ratio[1]), h = Number(ratio[2]);
   if (w && h) {
+    if (tier) {
+      if (w === h) return { size: `${square}x${square}` };
+      const long = tier === 4 ? 3840 : 2560;
+      const short = Math.round(long * Math.min(w, h) / Math.max(w, h));
+      if (short < 256) return { error: "该分辨率下短边不足 256 像素。请更换画幅比例。" };
+      return { size: w > h ? `${long}x${short}` : `${short}x${long}` };
+    }
     let a = w, b = h;
     while (b) [a, b] = [b, a % b];
     w /= a;
@@ -64,8 +95,8 @@ exports.main = async (event) => {
       return { ok: false, stage: "config", code: "INVALID_FOOTNOTE_MODE", message: "IMAGE_FOOTNOTE_MODE 只接受 empty、space 或 omit。", modelCalled: false };
     }
     const prompt = typeof event?.prompt === "string" ? event.prompt.trim() : "";
-    const { size, error } = requestedSize(prompt);
-    if (error) return { ok: false, stage: "input", code: "INVALID_ASPECT_RATIO", message: error, modelCalled: false };
+    const { size, error, code = "INVALID_ASPECT_RATIO" } = requestedSize(prompt);
+    if (error) return { ok: false, stage: "input", code, message: error, modelCalled: false };
     if (event?.action === "check") return { ok: true, stage: "ready", versions, footnoteMode, requestedSize: size, modelCalled: false };
     if (!prompt) return { ok: false, stage: "input", code: "EMPTY_PROMPT", message: "请传入非空的 prompt。" };
     stage = "generate";

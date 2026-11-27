@@ -59,6 +59,32 @@ for (const [prompt, size] of [
   ["展示模型比例 1:50 的火车", "1024x1024"],
   ["生成一张橘猫的图片，比例 5:2", "1600x640"],
   ["画一只橘猫，比例 5:2.", "1600x640"],
+  ["画一只在晒太阳的猫，4K，5:2。", "3840x1536"],
+  ["画一只在晒太阳的猫，5:2，2K。", "2560x1024"],
+  ["画一只猫，5:2；2K，", "2560x1024"],
+  ["画一个时钟。4K，5:2。", "3840x1536"],
+  ["Create a banner, 4k, aspect ratio 16:9", "3840x2160"],
+  ["画一张竖版海报，宽高比 9:16，２ｋ", "1440x2560"],
+  ["4K，2:5", "1536x3840"],
+  ["4K，宽高比 15:1", "3840x256"],
+  ["画猫，分辨率：２Ｋ", "2048x2048"],
+  ["2K, 1:1", "2048x2048"],
+  ["A poster, resolution: 4K, 1:1.", "4096x4096"],
+  ["Show the words 4K TV on a billboard", "1024x1024"],
+  ["Poster text:\n2K\n4K", "1024x1024"],
+  ["Poster text:\n4K", "1024x1024"],
+  ["Print the following line.\n4K", "1024x1024"],
+  ["Print the following line.\n4K.\nResolution: 2K", "2048x2048"],
+  ["Draw a clock,\n4K, 5:2", "3840x1536"],
+  ["A cat\nResolution: 4K\naspect ratio 5:2", "3840x1536"],
+  ["A cat, 4K. Keep the background plain.", "4096x4096"],
+  ["Draw a sign, 4K.TV, then a cat", "1024x1024"],
+  ["画猫\r\n分辨率：2K", "2048x2048"],
+  ["画一个标签，24K，重2kg", "1024x1024"],
+  ["画一只在晒太阳的猫，５：２", "1600x640"],
+  ["A cat in the sun, 2:5.", "640x1600"],
+  ["画一只猫，4K。", "4096x4096"],
+  ["画一只猫，宽高比 16:9，5:2。", "1408x792"],
   ["16:9", "1408x792"],
   ["Create a banner, aspect ratio 5:2.", "1600x640"],
   ["Create a 16:9 banner", "1408x792"],
@@ -67,6 +93,13 @@ for (const [prompt, size] of [
   ["显示 12:30 的时钟和比分 5:2", "1024x1024"],
   ["画一个时钟，12:00", "1024x1024"],
   ["画一个记分牌，5:2", "1024x1024"],
+  ["画一个时钟，12:30。", "1024x1024"],
+  ["Illustrate a scoreboard, 5:2.", "1024x1024"],
+  ["A scoreboard, close-up, 42:1.", "1024x1024"],
+  ["A clock, close-up, 12:30.", "1024x1024"],
+  ["Show a clock. Frame a cat, 5:2.", "1600x640"],
+  ["画一只猫，12:00。", "1024x1024"],
+  ["展示模型比例，1:50。", "1024x1024"],
 ]) {
   test(`generateImage canvas: ${prompt}`, async () => {
     const { main, calls } = fixture("space");
@@ -85,8 +118,15 @@ for (const [prompt, size] of [
 
 test("generateImage rejects unrepresentable ratios without calling the model", async () => {
   const { main, calls } = fixture();
-  for (const prompt of ["宽高比 0:2", "aspect ratio 1:50"]) {
+  for (const prompt of ["宽高比 0:2", "aspect ratio 1:50", "画一幅图，4K，宽高比 0:2", "画一幅图，2K，宽高比 20:1"]) {
     assert.equal((await main({ prompt })).code, "INVALID_ASPECT_RATIO");
   }
+  assert.equal(calls.length, 0);
+});
+
+test("conflicting resolution options do not submit an image", async () => {
+  const { main, calls } = fixture();
+  assert.equal((await main({ prompt: "A cat, 2K, 4K" })).code, "INVALID_RESOLUTION");
+  assert.equal((await main({ prompt: "A cat, 4K. A landscape, 2K." })).code, "INVALID_RESOLUTION");
   assert.equal(calls.length, 0);
 });
