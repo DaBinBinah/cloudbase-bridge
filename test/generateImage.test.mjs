@@ -74,6 +74,8 @@ for (const [prompt, size] of [
   ["Poster text:\n2K\n4K", "1024x1024"],
   ["Poster text:\n4K", "1024x1024"],
   ["Draw a clock,\n4K, 5:2", "3840x1536"],
+  ["A cat\nResolution: 4K\naspect ratio 5:2", "3840x1536"],
+  ["画猫\r\n分辨率：2K", "2048x2048"],
   ["画一个标签，24K，重2kg", "1024x1024"],
   ["画一只在晒太阳的猫，５：２", "1600x640"],
   ["A cat in the sun, 2:5.", "640x1600"],
