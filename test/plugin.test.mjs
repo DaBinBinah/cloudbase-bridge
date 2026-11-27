@@ -855,7 +855,44 @@ test("image alias is opt-in, survives chat discovery and uses a separate functio
       const res = await doFetch(chatBody({ model: IMAGE_MODEL, messages: [{ role: "user", content: "old" }, last] }));
       assert.equal(res.status, 400);
     }
-    assert.equal(gw.calls.length, 4);
+    assert.equal(gw.calls.length, 6); // discovery, two probe/generate pairs, chat
+  } finally { gw.restore(); }
+});
+
+/** Model an existing split deployment; capture only billable image invocations. */
+function splitImageGateway(handler) {
+  const calls = [];
+  const gw = mockGateway((url, init) => {
+    if (JSON.parse(init.body).action === "ping") {
+      assert.ok(String(url).endsWith("/aiProxy"));
+      return Response.json({ ok: true, models: ["hy4"] });
+    }
+    assert.ok(String(url).endsWith("/generateImage"));
+    calls.push({ url: String(url), init });
+    return handler();
+  });
+  return { calls, restore: gw.restore };
+}
+
+test("unified: probe configured function then send exactly one explicit image action, including on failure", async () => {
+  const hooks = await CloudbaseBridge({}, { image_generation: true });
+  const fetchChat = await loaderFetch(hooks, fakeAuth({ functionName: "customFn" }));
+  let ping = { ok: true, capabilities: { generateImage: true } }, fail = false;
+  const gw = mockGateway((_, init) => {
+    if (JSON.parse(init.body).action === "ping") return Response.json(ping);
+    if (fail) throw new Error("connection lost after submission");
+    return Response.json({ ok: true, url: "https://example.org/output.png" });
+  });
+  const request = () => fetchChat(chatBody({ model: IMAGE_MODEL }));
+  try {
+    assert.equal((await request()).status, 200);
+    fail = true;
+    assert.equal((await request()).status, 502);
+    ping = {};
+    assert.equal((await (await request()).json()).error.code, "IMAGE_ROUTE_UNAVAILABLE");
+    assert.ok(gw.calls.every(c => c.url.endsWith("/customFn")));
+    const check = { action: "ping" }, image = { action: "generateImage", prompt: "hi" };
+    assert.deepEqual(gw.calls.map(c => JSON.parse(c.init.body)), [check, image, check, image, check]);
   } finally { gw.restore(); }
 });
 
@@ -866,7 +903,7 @@ test("DSH image replies carry one inline image and its original link in JSON and
   let url = "https://example.org/cat(1).png?q-key-time=123;456&q-signature=a%2Bb%3D&copy;=1";
   const destination = "<https://example.org/cat(1).png?q-key-time=123;456&amp;q-signature=a%2Bb%3D&amp;copy;=1>";
   const markdown = `![生成的图片](${destination})\n\n[打开原图](${destination})`;
-  const gw = mockGateway(async () => Response.json({ url }));
+  const gw = splitImageGateway(async () => Response.json({ url }));
   const request = stream => fetchChat(chatBody({ model: IMAGE_MODEL, messages, stream }));
   try {
     assert.equal((await (await request(false)).json()).choices[0].message.content, markdown);
@@ -891,7 +928,7 @@ test("DSH title and runtime reminders never reach the image function", async () 
   ];
   const agent = system("You are an AI agent powered by DeepSeek Harness.");
   const reminder = user("<system-reminder>\nCurrent working directory: /private/workspace\n</system-reminder>");
-  const gw = mockGateway(async () => Response.json({ url: "https://example.org/cat.png" }));
+  const gw = splitImageGateway(async () => Response.json({ url: "https://example.org/cat.png" }));
   const request = (messages, stream = false) => doFetch(chatBody({ model: IMAGE_MODEL, messages, stream }));
   try {
     assert.equal((await (await request(title)).json()).choices[0].message.content, "图片生成");
@@ -914,7 +951,7 @@ test("markerless DSH runtime context selects previews without replacing the huma
   const ask = user("画橘猫");
   const clock = user("Time sampled while preparing turn 1, step 1: 2026-11-25T23:04:35+08:00[Asia/Singapore]\nBrowser time zone for this request: unavailable.\nElapsed since the preceding model-visible message: unavailable.");
   const snapshot = user("<system-reminder>\nThe following information describes your current session:\n\nCurrent DSH file policy: test\n</system-reminder>");
-  const gw = mockGateway(async () => Response.json({ url: "https://example.org/cat.png" }));
+  const gw = splitImageGateway(async () => Response.json({ url: "https://example.org/cat.png" }));
   const call = async messages => (await (await doFetch(chatBody({ model: IMAGE_MODEL, messages }))).json()).choices[0].message.content;
   try {
     for (const messages of [[ask, clock], [ask, snapshot], [ask, snapshot, clock],
@@ -938,7 +975,7 @@ test("explicit preview toggle works without any client marker but does not enabl
   assert.equal(hooks.auth.options.find(o => o.key === "image_inline_preview").default, false);
   const doFetch = await loaderFetch(hooks);
   const call = () => doFetch(chatBody({ model: IMAGE_MODEL }));
-  const gw = mockGateway(async () => Response.json({ url: "https://example.org/cat.png" }));
+  const gw = splitImageGateway(async () => Response.json({ url: "https://example.org/cat.png" }));
   try {
     assert.equal((await call()).status, 404);
     assert.equal(gw.calls.length, 0);
@@ -962,7 +999,7 @@ test("DSH web clock is metadata, not the image prompt; ambiguous turns do not in
   const reminder = user("<system-reminder>\nruntime context\n</system-reminder>");
   const prompt = "画一只戴蓝色围巾的橘猫，水彩风格";
   const call = (...tail) => doFetch(chatBody({ model: IMAGE_MODEL, messages: [agent, ...tail] }));
-  const gw = mockGateway(async () => Response.json({ url: "https://example.org/cat.png" }));
+  const gw = splitImageGateway(async () => Response.json({ url: "https://example.org/cat.png" }));
   try {
     assert.equal((await call(user(prompt), reminder, user(clock))).status, 200);
     assert.equal((await call(user("old"), { role: "assistant", content: "done" },
@@ -982,7 +1019,7 @@ test("image requests surface function errors, reject invalid image URLs and neve
     [{ ok: true, url: "javascript:alert(1)" }, 502, "INVALID_FUNCTION_RESPONSE"],
     [{}, 502, "INVALID_FUNCTION_RESPONSE"],
   ]) {
-    const gw = mockGateway(async () => Response.json(reply));
+    const gw = splitImageGateway(async () => Response.json(reply));
     try {
       const res = await doFetch(chatBody({ model: IMAGE_MODEL }));
       assert.equal(res.status, status);

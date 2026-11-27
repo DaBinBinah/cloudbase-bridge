@@ -34,7 +34,7 @@
  * Version & constants (single source of truth; no imports allowed —  *
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
-export const PLUGIN_VERSION = "0.2.10";
+export const PLUGIN_VERSION = "0.2.11";
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
 const PROVIDER_ID = "cloudbase";
@@ -683,11 +683,29 @@ async function bridgeFetch(input, init) {
         const title = normalizeCompletion({ choices: [{ message: { content: "图片生成" } }] });
         return stream ? sseResponse(title, rawModel) : jsonCompletionResponse(title, rawModel);
     }
-    const functionName = isImage ? IMAGE_FUNCTION : cfg.functionName;
     const dshImage = isImage && isDshConversation(body.messages);
     const event = isImage ? imageEvent(body.messages, dshImage) : buildInvokeEvent(body, model);
     if (!event)
         return errorResponse(400, "Image generation expects one unambiguous, non-empty text-only user prompt in the current turn.", { code: "INVALID_IMAGE_PROMPT" });
+    const timeoutSignal = AbortSignal.timeout(cfg.timeoutMs);
+    const signal = combineSignals(init?.signal, timeoutSignal);
+    let functionName = cfg.functionName;
+    if (isImage) {
+        try {
+            const ping = await invokePing(cfg, signal);
+            if (isPlainObject(ping.capabilities) && ping.capabilities.generateImage === true) {
+                event.action = "generateImage";
+            }
+            else {
+                functionName = IMAGE_FUNCTION;
+            }
+        }
+        catch {
+            if (init?.signal?.aborted)
+                throw init.signal.reason;
+            return errorResponse(502, `Image capability check failed for ${cfg.functionName}; no image request was sent.`, { code: "IMAGE_ROUTE_UNAVAILABLE" });
+        }
+    }
     const payload = JSON.stringify(event);
     // Measure real UTF-8 bytes: string .length counts UTF-16 code units and
     // under-reports CJK content (each CJK char is typically 3 bytes but 1-2 units).
@@ -696,8 +714,6 @@ async function bridgeFetch(input, init) {
         return errorResponse(413, `Conversation payload too large (${payloadBytes} bytes; limit ${DEFAULT_MAX_EVENT_BYTES} bytes). Trim the history and retry.`, { code: "PAYLOAD_TOO_LARGE" });
     }
     log("debug", `invoke ${functionName} model=${model} stream=${stream} bytes=${payloadBytes}`);
-    const timeoutSignal = AbortSignal.timeout(cfg.timeoutMs);
-    const signal = combineSignals(init?.signal, timeoutSignal);
     let upstream;
     try {
         upstream = await fetch(invokeUrl(cfg, functionName), {
@@ -764,7 +780,7 @@ async function bridgeFetch(input, init) {
     // so clients keep seeing the identity they asked for.
     return stream ? sseResponse(completion, rawModel) : jsonCompletionResponse(completion, rawModel);
 }
-async function invokePing(cfg) {
+async function invokePing(cfg, signal) {
     const upstream = await fetch(invokeUrl(cfg), {
         method: "POST",
         headers: {
@@ -774,7 +790,7 @@ async function invokePing(cfg) {
             authorization: `Bearer ${cfg.apiKey}`,
         },
         body: JSON.stringify({ action: "ping" }),
-        signal: AbortSignal.timeout(15_000),
+        signal: combineSignals(signal, AbortSignal.timeout(15_000)),
     });
     if (!upstream.ok) {
         throw new Error(`ping failed with HTTP ${upstream.status}`);
@@ -829,7 +845,7 @@ export const CloudbaseBridge = async (input = {}, options = {}) => {
             options: [{
                     key: IMAGE_OPTION,
                     label: "启用 DSH 生图 / Image generation",
-                    description: "Send text prompts to the separate generateImage function. Each invocation can incur charges.",
+                    description: "Generate images through the configured function or the legacy generateImage function. Each generation can incur charges.",
                     default: false,
                     filtersModels: true,
                 }, {
