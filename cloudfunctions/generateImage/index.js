@@ -4,8 +4,8 @@ function trailingCanvasRatio(text) {
   const suffix = /[,;、\n]\s*([1-9]\d{0,3})\s*[:∶比]\s*([1-9]\d{0,3})\s*[。.!?]?$/.exec(text);
   if (!suffix) return null;
   // A bare ratio after a score, clock or scale description can be part of the subject.
-  const preceding = text.slice(0, suffix.index).split(/[,;、。!?\n]/).at(-1);
-  return /比分|计分|记分|时[钟间刻]|钟[表面]|比例尺|模型比例|\b(?:scores?|scoreboards?|clocks?|time|scales?)\b/iu.test(preceding) ? null : suffix;
+  const sentence = text.slice(0, suffix.index).split(/[;。!?\n]|\.(?=\s|$)/u).at(-1);
+  return /比分|计分|记分|时[钟间刻]|钟[表面]|比例尺|模型比例|\b(?:scores?|scoreboards?|clocks?|time|scales?)\b/iu.test(sentence) ? null : suffix;
 }
 
 function requestedSize(prompt) {

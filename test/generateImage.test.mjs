@@ -74,6 +74,9 @@ for (const [prompt, size] of [
   ["画一个记分牌，5:2", "1024x1024"],
   ["画一个时钟，12:30。", "1024x1024"],
   ["Illustrate a scoreboard, 5:2.", "1024x1024"],
+  ["A scoreboard, close-up, 42:1.", "1024x1024"],
+  ["A clock, close-up, 12:30.", "1024x1024"],
+  ["Show a clock. Frame a cat, 5:2.", "1600x640"],
   ["画一只猫，12:00。", "1024x1024"],
   ["展示模型比例，1:50。", "1024x1024"],
 ]) {
