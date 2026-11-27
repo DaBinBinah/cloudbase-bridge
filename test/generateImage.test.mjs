@@ -57,6 +57,7 @@ for (const [prompt, size] of [
   ["设计一张 16:9 的横版海报，展示模型比例 1:50 的火车", "1408x792"],
   ["展示模型比例 1:50 的火车", undefined],
   ["Create a banner, aspect ratio 5:2.", "1600x640"],
+  ["Create a 16:9 banner", "1408x792"],
   ["画一个正方形图标 --ar 1:1", "1024x1024"],
   ["一只猫坐在窗台上", undefined],
   ["显示 12:30 的时钟和比分 5:2", undefined],
