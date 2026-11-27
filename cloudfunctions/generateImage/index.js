@@ -15,9 +15,12 @@ function requestedSize(prompt) {
     return prefix;
   }
   // A bare tier must occupy a list field; on its own line require a label to distinguish poster copy.
-  const withoutTier = prompt.normalize("NFKC").trim().replace(/(?:[^.,;、。!?]|\.(?=[^\s.,;、。!?]))+/gu, field => field
-    .replace(/^(\s*)([24])k(?=\s*$)/iu, takeTier)
-    .replace(/^([^\S\r\n]*)(?:分辨率|resolution)[^\S\r\n]*(?:[:=为是][^\S\r\n]*)?([24])k(?=[^\S\r\n]*$)/gimu, takeTier));
+  const withoutTier = prompt.normalize("NFKC").trim().replace(/(?:[^.,;、。!?]|\.(?=[^\s.,;、。!?]))+/gu, (field, start, input) => {
+    if (start === 0 || /[,;、]/u.test(input[start - 1]) || /[,;、]/u.test(input[start + field.length])) {
+      field = field.replace(/^(\s*)([24])k(?=\s*$)/iu, takeTier);
+    }
+    return field.replace(/^([^\S\r\n]*)(?:分辨率|resolution)[^\S\r\n]*(?:[:=为是][^\S\r\n]*)?([24])k(?=[^\S\r\n]*$)/gimu, takeTier);
+  });
   if (tiers.size > 1) return { code: "INVALID_RESOLUTION", error: "请只指定一种输出分辨率：2K 或 4K。" };
   const [tier] = tiers;
   const text = tier ? withoutTier.replace(/[\s,;、。.!?]+$/u, "") : withoutTier;

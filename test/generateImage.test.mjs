@@ -73,6 +73,8 @@ for (const [prompt, size] of [
   ["Show the words 4K TV on a billboard", "1024x1024"],
   ["Poster text:\n2K\n4K", "1024x1024"],
   ["Poster text:\n4K", "1024x1024"],
+  ["Print the following line.\n4K", "1024x1024"],
+  ["Print the following line.\n4K.\nResolution: 2K", "2048x2048"],
   ["Draw a clock,\n4K, 5:2", "3840x1536"],
   ["A cat\nResolution: 4K\naspect ratio 5:2", "3840x1536"],
   ["A cat, 4K. Keep the background plain.", "4096x4096"],
