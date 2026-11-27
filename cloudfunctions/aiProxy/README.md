@@ -9,7 +9,7 @@ the plugin**, under the name **`aiProxy`** (or a custom name you also set
 during plugin login).
 
 This directory is the **chat-only source deployment** (including image input).
-For chat and image generation on one function use the [unified release ZIP](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/v0.2.11/aiProxy-unified-with-deps.zip) instead. See the [deployment settings](../../README.md#models).
+For chat and image generation on one function use the [unified release ZIP](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/aiproxy-2026.11.27/aiProxy-unified-with-deps.zip) instead. See the [deployment settings](../../README.md#models).
 Calling the SDK from a cloud function does not change the original caller's eligibility for [CloudBase gift quota](https://docs.cloudbase.net/ai/ai-inspire-plan-usage-governance).
 
 ## Files

@@ -7,7 +7,7 @@ short version plus the checklist of things people commonly get wrong.
 
 ## TL;DR
 
-For chat **and** optional image generation, upload the [unified ZIP](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/v0.2.11/aiProxy-unified-with-deps.zip) as an event function (`index.main`, Node.js 20, dependencies already bundled). A `ping` should advertise `capabilities.generateImage: true`; `{"action":"checkImage"}` tests the image SDK without generating.
+For chat **and** optional image generation, upload the [unified ZIP](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/aiproxy-2026.11.27/aiProxy-unified-with-deps.zip) as an event function (`index.main`, Node.js 20, dependencies already bundled). A `ping` should advertise `capabilities.generateImage: true`; `{"action":"checkImage"}` tests the image SDK without generating.
 
 The CLI procedure below deploys **only chat and image input**. Do not run it over a unified deployment.
 
