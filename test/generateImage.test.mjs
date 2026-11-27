@@ -49,3 +49,36 @@ test("generateImage rejects an invalid footnote mode before calling the model", 
   assert.equal((await main({ prompt: "A ceramic vase" })).code, "INVALID_FOOTNOTE_MODE");
   assert.equal(calls.length, 0);
 });
+
+for (const [prompt, size] of [
+  ["内容是：黑五 Google AI 订阅避坑指南\n生成一张宽高比为 5:2 的图片", "1600x640"],
+  ["生成一张宽高比为２：５的图片", "640x1600"],
+  ["设计一张 10:4 的横幅", "1600x640"],
+  ["Create a banner, aspect ratio 5:2.", "1600x640"],
+  ["画一个正方形图标 --ar 1:1", "1024x1024"],
+  ["一只猫坐在窗台上", undefined],
+  ["显示 12:30 的时钟和比分 5:2", undefined],
+]) {
+  test(`generateImage canvas: ${prompt}`, async () => {
+    const { main, calls } = fixture("space");
+    const status = await main({ action: "check", prompt });
+    assert.equal(status.requestedSize, size ?? "auto");
+    assert.equal(status.modelCalled, false);
+    assert.equal(calls.length, 0);
+    assert.equal((await main({ prompt })).ok, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].size, size);
+    assert.equal(Object.hasOwn(calls[0], "size"), size !== undefined);
+    assert.equal(Object.hasOwn(calls[0], "generate_max_pixels"), false);
+    assert.equal(calls[0].messages[0].content[0].text, prompt);
+    assert.equal(calls[0].footnote, " ");
+  });
+}
+
+test("generateImage rejects unrepresentable ratios without calling the model", async () => {
+  const { main, calls } = fixture();
+  for (const prompt of ["宽高比 0:2", "aspect ratio 1:50"]) {
+    assert.equal((await main({ prompt })).code, "INVALID_ASPECT_RATIO");
+  }
+  assert.equal(calls.length, 0);
+});
