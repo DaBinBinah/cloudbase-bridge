@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [SemVer](https://semver.org/).
 
+## [0.2.11] - 2026-11-27
+
+- Deploy a single `aiProxy` ZIP for chat, image input and optional image generation. Existing split deployments keep working. The plugin checks capabilities before sending an image prompt; it never retries a submitted generation against another function.
+- Explicit canvas ratios set image dimensions (5:2 → 1600×640); otherwise the bundled function requests 1024×1024. Use `{"action":"checkImage"}` for a model-free self-test.
+- Chat-only users, including plugin 0.2.4, do not need to change anything. Keep the separate `generateImage` for older image-enabled clients.
+
 ## [0.2.10] - 2026-11-25
 
 - DSH web image replies now show an inline preview and an **打开原图**

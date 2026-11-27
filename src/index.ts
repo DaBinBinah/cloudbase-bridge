@@ -36,7 +36,7 @@
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
 
-export const PLUGIN_VERSION = "0.2.10" as const;
+export const PLUGIN_VERSION = "0.2.11" as const;
 
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
@@ -892,10 +892,25 @@ async function bridgeFetch(this: BridgeContext, input: unknown, init?: { method?
     const title = normalizeCompletion({ choices: [{ message: { content: "图片生成" } }] })!;
     return stream ? sseResponse(title, rawModel) : jsonCompletionResponse(title, rawModel);
   }
-  const functionName = isImage ? IMAGE_FUNCTION : cfg.functionName;
   const dshImage = isImage && isDshConversation(body.messages);
   const event = isImage ? imageEvent(body.messages, dshImage) : buildInvokeEvent(body, model);
   if (!event) return errorResponse(400, "Image generation expects one unambiguous, non-empty text-only user prompt in the current turn.", { code: "INVALID_IMAGE_PROMPT" });
+  const timeoutSignal = AbortSignal.timeout(cfg.timeoutMs);
+  const signal = combineSignals(init?.signal, timeoutSignal);
+  let functionName = cfg.functionName;
+  if (isImage) {
+    try {
+      const ping = await invokePing(cfg, signal);
+      if (isPlainObject(ping.capabilities) && ping.capabilities.generateImage === true) {
+        event.action = "generateImage";
+      } else {
+        functionName = IMAGE_FUNCTION;
+      }
+    } catch {
+      if (init?.signal?.aborted) throw init.signal.reason;
+      return errorResponse(502, `Image capability check failed for ${cfg.functionName}; no image request was sent.`, { code: "IMAGE_ROUTE_UNAVAILABLE" });
+    }
+  }
   const payload = JSON.stringify(event);
   // Measure real UTF-8 bytes: string .length counts UTF-16 code units and
   // under-reports CJK content (each CJK char is typically 3 bytes but 1-2 units).
@@ -909,9 +924,6 @@ async function bridgeFetch(this: BridgeContext, input: unknown, init?: { method?
   }
 
   log("debug", `invoke ${functionName} model=${model} stream=${stream} bytes=${payloadBytes}`);
-
-  const timeoutSignal = AbortSignal.timeout(cfg.timeoutMs);
-  const signal = combineSignals(init?.signal, timeoutSignal);
 
   let upstream: Response;
   try {
@@ -1009,9 +1021,10 @@ interface PingResult {
   version?: string;
   env?: string | null;
   models?: unknown;
+  capabilities?: unknown;
 }
 
-async function invokePing(cfg: AccountConfig): Promise<PingResult> {
+async function invokePing(cfg: AccountConfig, signal?: AbortSignal): Promise<PingResult> {
   const upstream = await fetch(invokeUrl(cfg), {
     method: "POST",
     headers: {
@@ -1021,7 +1034,7 @@ async function invokePing(cfg: AccountConfig): Promise<PingResult> {
       authorization: `Bearer ${cfg.apiKey}`,
     },
     body: JSON.stringify({ action: "ping" }),
-    signal: AbortSignal.timeout(15_000),
+    signal: combineSignals(signal, AbortSignal.timeout(15_000)),
   });
   if (!upstream.ok) {
     throw new Error(`ping failed with HTTP ${upstream.status}`);
@@ -1087,7 +1100,7 @@ export const CloudbaseBridge = async (
       options: [{
         key: IMAGE_OPTION,
         label: "启用 DSH 生图 / Image generation",
-        description: "Send text prompts to the separate generateImage function. Each invocation can incur charges.",
+        description: "Generate images through the configured function or the legacy generateImage function. Each generation can incur charges.",
         default: false,
         filtersModels: true,
       }, {

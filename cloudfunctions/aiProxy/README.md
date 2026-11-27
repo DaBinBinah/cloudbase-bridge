@@ -8,11 +8,9 @@ deployed in the same CloudBase environment as the API Key you configure in
 the plugin**, under the name **`aiProxy`** (or a custom name you also set
 during plugin login).
 
-Why a cloud function? The "小程序成长计划" (mini-program growth plan) AI
-quota is only spendable from CloudBase SDK channels — direct calls to
-`/v1/ai/*` model endpoints fail with `AI_CHANNEL_NOT_ALLOWED`. Inside a cloud
-function the Node SDK channel is allowed and the gift quota is deducted
-automatically.
+This directory is the **chat-only source deployment** (including image input).
+For chat and image generation on one function use the [unified release ZIP](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/v0.2.11/aiProxy-unified-with-deps.zip) instead. See the [deployment settings](../../README.md#models).
+Calling the SDK from a cloud function does not change the original caller's eligibility for [CloudBase gift quota](https://docs.cloudbase.net/ai/ai-inspire-plan-usage-governance).
 
 ## Files
 

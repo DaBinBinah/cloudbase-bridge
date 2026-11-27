@@ -1,5 +1,29 @@
 "use strict";
 
+function requestedSize(prompt) {
+  const text = prompt.normalize("NFKC").trim();
+  const ratio = /(?:宽高比(?:例)?|长宽比(?:例)?|横纵比|画幅(?:比例)?|(?:画布|图片|图像|海报)比例|aspect\s+ratio\b|--ar\b)\s*(?:为|是|设为|设置为|of|is|=|:)?\s*(\d{1,4})\s*[:∶比]\s*(\d{1,4})(?!\d|[.:∶]\s*\d)/iu.exec(text)
+    ?? /(?<![\d.:∶])(\d{1,4})\s*[:∶比]\s*(\d{1,4})\s*(?:的\s*)?(?:宽高比|长宽比|画幅|横幅|竖幅|横版|竖版|海报|画布|图片|(?:aspect\s+ratio|banner|poster|canvas|image)\b)/iu.exec(text)
+    ?? /(?:^|[,;。!?\n])\s*比例\s*(?:为|是|[:=])?\s*(\d{1,4})\s*[:∶比]\s*(\d{1,4})\s*(?=$|[,;。!?\n]|\.(?!\d))/u.exec(text)
+    ?? /^(\d{1,4})\s*[:∶比]\s*(\d{1,4})$/u.exec(text);
+  if (!ratio) return { size: "1024x1024" };
+  let w = Number(ratio[1]), h = Number(ratio[2]);
+  if (w && h) {
+    let a = w, b = h;
+    while (b) [a, b] = [b, a % b];
+    w /= a;
+    h /= a;
+    // Keep explicitly sized images near 1 MP, within CloudBase's dimension and area limits.
+    const min = Math.ceil(256 / Math.min(w, h));
+    const max = Math.min(Math.floor(8192 / Math.max(w, h)), Math.floor(4096 / Math.sqrt(w * h)));
+    if (min <= max) {
+      const scale = Math.min(max, Math.max(min, 8 * Math.round(1024 / Math.sqrt(w * h) / 8)));
+      return { size: `${w * scale}x${h * scale}` };
+    }
+  }
+  return { error: "该宽高比无法生成有效尺寸。请使用正整数比例，如「宽高比 5:2」。" };
+}
+
 function diagnostic(err) {
   const message = String(err?.message ?? "");
   const rawCode = err?.code ?? err?.err?.code ?? message.match(/错误码[:：]\s*([\w.-]+)/)?.[1];
@@ -39,13 +63,15 @@ exports.main = async (event) => {
     if (!["empty", "space", "omit"].includes(footnoteMode)) {
       return { ok: false, stage: "config", code: "INVALID_FOOTNOTE_MODE", message: "IMAGE_FOOTNOTE_MODE 只接受 empty、space 或 omit。", modelCalled: false };
     }
-    if (event?.action === "check") return { ok: true, stage: "ready", versions, footnoteMode, modelCalled: false };
     const prompt = typeof event?.prompt === "string" ? event.prompt.trim() : "";
+    const { size, error } = requestedSize(prompt);
+    if (error) return { ok: false, stage: "input", code: "INVALID_ASPECT_RATIO", message: error, modelCalled: false };
+    if (event?.action === "check") return { ok: true, stage: "ready", versions, footnoteMode, requestedSize: size, modelCalled: false };
     if (!prompt) return { ok: false, stage: "input", code: "EMPTY_PROMPT", message: "请传入非空的 prompt。" };
     stage = "generate";
     const res = await model.generateImage({
       model: "hy-image-v3.5-preview",
-      size: "1024x1024",
+      size,
       ...(footnoteMode !== "omit" && { footnote: footnoteMode === "space" ? " " : "" }),
       messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
     });
