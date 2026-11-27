@@ -12,8 +12,8 @@ function requestedSize(prompt) {
   const tiers = new Set();
   // Parse output options separately from the original prompt sent to the model.
   const withoutTier = prompt.normalize("NFKC").trim().replace(
-    /(^|[,;、。!?\n])\s*(?:(?:分辨率|resolution)\s*(?:[:=为是]\s*)?)?([24])k(?=\s*(?:$|[,;、。!?\n]|\.(?=\s|$)))/giu,
-    (_, separator, tier) => { tiers.add(Number(tier)); return separator; },
+    /((?:^|[,;、。!?])\s*)(?:(?:分辨率|resolution)\s*(?:[:=为是]\s*)?)?([24])k(?=\s*(?:$|[,;、。!?]|\.(?=\s|$)))/giu,
+    (_, prefix, tier) => { tiers.add(Number(tier)); return prefix; },
   );
   if (tiers.size > 1) return { code: "INVALID_RESOLUTION", error: "请只指定一种输出分辨率：2K 或 4K。" };
   const [tier] = tiers;
