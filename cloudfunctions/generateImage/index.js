@@ -4,8 +4,8 @@ function requestedSize(prompt) {
   const text = prompt.normalize("NFKC").trim();
   const ratio = /(?:宽高比(?:例)?|长宽比(?:例)?|横纵比|画幅(?:比例)?|(?:画布|图片|图像|海报)比例|aspect\s+ratio\b|--ar\b)\s*(?:为|是|设为|设置为|of|is|=|:)?\s*(\d{1,4})\s*[:∶比]\s*(\d{1,4})(?!\d|[.:∶]\s*\d)/iu.exec(text)
     ?? /(?<![\d.:∶])(\d{1,4})\s*[:∶比]\s*(\d{1,4})\s*(?:的\s*)?(?:宽高比|长宽比|画幅|横幅|竖幅|横版|竖版|海报|画布|图片|(?:aspect\s+ratio|banner|poster|canvas|image)\b)/iu.exec(text)
-    ?? /^(\d{1,4})\s*[:∶比]\s*(\d{1,4})$/u.exec(text);
-  if (!ratio) return {};
+    ?? /(?:^|[,;。!?\n])\s*(?:比例\s*(?:为|是|[:=])?\s*)?(\d{1,4})\s*[:∶比]\s*(\d{1,4})\s*(?=$|[,;。!?\n])/u.exec(text);
+  if (!ratio) return { size: "1024x1024" };
   let w = Number(ratio[1]), h = Number(ratio[2]);
   if (w && h) {
     let a = w, b = h;
@@ -65,12 +65,12 @@ exports.main = async (event) => {
     const prompt = typeof event?.prompt === "string" ? event.prompt.trim() : "";
     const { size, error } = requestedSize(prompt);
     if (error) return { ok: false, stage: "input", code: "INVALID_ASPECT_RATIO", message: error, modelCalled: false };
-    if (event?.action === "check") return { ok: true, stage: "ready", versions, footnoteMode, requestedSize: size ?? "auto", modelCalled: false };
+    if (event?.action === "check") return { ok: true, stage: "ready", versions, footnoteMode, requestedSize: size, modelCalled: false };
     if (!prompt) return { ok: false, stage: "input", code: "EMPTY_PROMPT", message: "请传入非空的 prompt。" };
     stage = "generate";
     const res = await model.generateImage({
       model: "hy-image-v3.5-preview",
-      ...(size && { size }),
+      size,
       ...(footnoteMode !== "omit" && { footnote: footnoteMode === "space" ? " " : "" }),
       messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
     });
