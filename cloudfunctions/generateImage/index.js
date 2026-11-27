@@ -1,11 +1,20 @@
 "use strict";
 
+function trailingCanvasRatio(text) {
+  const suffix = /[,;、\n]\s*([1-9]\d{0,3})\s*[:∶比]\s*([1-9]\d{0,3})\s*[。.!?]?$/.exec(text);
+  if (!suffix) return null;
+  // A bare ratio after a score, clock or scale description can be part of the subject.
+  const preceding = text.slice(0, suffix.index).split(/[,;、。!?\n]/).at(-1);
+  return /比分|计分|记分|时[钟间刻]|钟[表面]|比例尺|模型比例|\b(?:scores?|scoreboards?|clocks?|time|scales?)\b/iu.test(preceding) ? null : suffix;
+}
+
 function requestedSize(prompt) {
   const text = prompt.normalize("NFKC").trim();
   const ratio = /(?:宽高比(?:例)?|长宽比(?:例)?|横纵比|画幅(?:比例)?|(?:画布|图片|图像|海报)比例|aspect\s+ratio\b|--ar\b)\s*(?:为|是|设为|设置为|of|is|=|:)?\s*(\d{1,4})\s*[:∶比]\s*(\d{1,4})(?!\d|[.:∶]\s*\d)/iu.exec(text)
     ?? /(?<![\d.:∶])(\d{1,4})\s*[:∶比]\s*(\d{1,4})\s*(?:的\s*)?(?:宽高比|长宽比|画幅|横幅|竖幅|横版|竖版|海报|画布|图片|(?:aspect\s+ratio|banner|poster|canvas|image)\b)/iu.exec(text)
     ?? /(?:^|[,;。!?\n])\s*比例\s*(?:为|是|[:=])?\s*(\d{1,4})\s*[:∶比]\s*(\d{1,4})\s*(?=$|[,;。!?\n]|\.(?!\d))/u.exec(text)
-    ?? /^(\d{1,4})\s*[:∶比]\s*(\d{1,4})$/u.exec(text);
+    ?? /^(\d{1,4})\s*[:∶比]\s*(\d{1,4})\s*[。.!?]?$/u.exec(text)
+    ?? trailingCanvasRatio(text);
   if (!ratio) return { size: "1024x1024" };
   let w = Number(ratio[1]), h = Number(ratio[2]);
   if (w && h) {
