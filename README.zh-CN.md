@@ -8,6 +8,16 @@
 
 > 社区项目：和 Magpie、腾讯云都没有关系，也没有经过 Magpie 官方审核或收录。
 
+**思考等级（测试版）**：需同时更新测试插件和 `aiProxy`；旧正式版 ZIP 不传此参数。部署后在 Magpie 点「重新获取模型」。模型设置里的勾选表示可供客户端选择的档位，并不强制每次使用。客户端不指定时不传参数，生图也不传。
+
+| 模型 | 提供给客户端的档位 |
+|---|---|
+| `hy4-flash`、`hy4`、`hy4-preview` | 不思考、高 |
+| `hy3` | 不思考、低、高（带工具时，低可能被上游映射为高） |
+| `deepseek-v4.1-flash`、`deepseek-v4.1-flash-1017` | 不思考、低、高、最高 |
+
+依据：[CloudBase 模型表](https://docs.cloudbase.net/ai/available-models)、[腾讯混元逐型号参数](https://cloud.tencent.com/document/product/1823/131208)、[DeepSeek 思考模式](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/)。腾讯不同页面对部分档位的说明不一致，表中只展示双方明确支持的档位。
+
 ![「小程序成长计划」赠送额度：10 亿 Token + 10 万张生图（云开发控制台截图）](docs/images/growth-plan-quota.png)
 
 ## 为什么要经过一个云函数？

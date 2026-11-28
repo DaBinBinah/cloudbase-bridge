@@ -34,7 +34,7 @@
  * Version & constants (single source of truth; no imports allowed —  *
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
-export const PLUGIN_VERSION = "0.2.11";
+export const PLUGIN_VERSION = "0.2.12-reasoning.1";
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
 const PROVIDER_ID = "cloudbase";
@@ -106,6 +106,7 @@ function accountModelEntry(id, base) {
         limit,
         capabilities: {
             ...capabilities,
+            reasoning: false,
             toolcall: true,
             input: { ...(isPlainObject(capabilities.input) ? capabilities.input : {}), text: true, image: spec ? spec.image : true },
         },
@@ -351,6 +352,10 @@ function mapFunctionError(err, requestId) {
  * ------------------------------------------------------------------ */
 function buildInvokeEvent(body, model) {
     const event = { action: "chat", model, messages: body.messages };
+    if (body.reasoning_effort != null)
+        event.reasoning_effort = body.reasoning_effort;
+    if (body.thinking != null)
+        event.thinking = body.thinking;
     if (typeof body.temperature === "number" && Number.isFinite(body.temperature)) {
         event.temperature = body.temperature;
     }
@@ -690,6 +695,19 @@ async function bridgeFetch(input, init) {
     const timeoutSignal = AbortSignal.timeout(cfg.timeoutMs);
     const signal = combineSignals(init?.signal, timeoutSignal);
     let functionName = cfg.functionName;
+    if (!isImage && (event.reasoning_effort != null || event.thinking != null)) {
+        try {
+            const ping = await invokePing(cfg, signal);
+            if (!reasoningLevels(ping, model).length) {
+                return errorResponse(400, `The deployed ${functionName} does not advertise reasoning controls for ${model}. Update the function or omit the reasoning option.`, { code: "REASONING_UNAVAILABLE" });
+            }
+        }
+        catch {
+            if (init?.signal?.aborted)
+                throw init.signal.reason;
+            return errorResponse(502, "Could not check reasoning support; no chat request was sent.", { code: "REASONING_PROBE_FAILED" });
+        }
+    }
     if (isImage) {
         try {
             const ping = await invokePing(cfg, signal);
@@ -779,6 +797,10 @@ async function bridgeFetch(input, init) {
     // Echo the model id exactly as the agent requested it (prefix included)
     // so clients keep seeing the identity they asked for.
     return stream ? sseResponse(completion, rawModel) : jsonCompletionResponse(completion, rawModel);
+}
+function reasoningLevels(ping, model) {
+    const levels = isPlainObject(ping.reasoningLevels) ? ping.reasoningLevels[model] : undefined;
+    return Array.isArray(levels) ? levels.filter((l) => ["none", "low", "high", "max"].includes(l)) : [];
 }
 async function invokePing(cfg, signal) {
     const upstream = await fetch(invokeUrl(cfg), {
@@ -934,6 +956,17 @@ export const CloudbaseBridge = async (input = {}, options = {}) => {
                         if (id === IMAGE_MODEL)
                             continue;
                         const entry = base[id] ? { ...base[id] } : accountModelEntry(id, base);
+                        const levels = reasoningLevels(ping, id);
+                        if (levels.length) {
+                            if (isPlainObject(entry.capabilities))
+                                entry.capabilities = { ...entry.capabilities, reasoning: true };
+                            else
+                                entry.reasoning = true;
+                            const variants = isPlainObject(entry.variants) ? entry.variants : {};
+                            entry.variants = Object.fromEntries(levels.map(level => [level, {
+                                    ...(isPlainObject(variants[level]) ? variants[level] : {}), reasoningEffort: level,
+                                }]));
+                        }
                         // The deployed function's allowlist explicitly accepts this id
                         // (it just said so in the ping), so a static placeholder
                         // `disabled` flag from the config-hook catalog must not survive.

@@ -33,6 +33,7 @@ Calling the SDK from a cloud function does not change the original caller's elig
   "temperature": 0.7,          // optional, 0..2
   "topP": 0.9,                 // optional, [0, 1]
   "maxTokens": 1024,           // optional, positive integer
+  "reasoning_effort": "high",  // optional; ping.reasoningLevels[model] lists supported levels
   "tools": [                   // optional, OpenAI function tools
     { "type": "function", "function": { "name": "read_file", "description": "...", "parameters": { "type": "object" } } }
   ],
@@ -52,6 +53,9 @@ Thinking-mode models: `message.reasoning_content` is returned when the model
 sends it, and is forwarded back to the model on every assistant message
 that carries it (such models reject a tool-enabled request whose earlier
 turns lack their reasoning).
+
+The reasoning preview accepts `reasoning_effort` and/or `thinking: {type: "enabled" | "disabled"}`.
+`none` switches thinking off; omitted controls preserve the model default. Conflicting or unsupported settings fail before `generateText`.
 
 Image input: a `user` message may carry OpenAI `image_url` parts next to
 its text parts. The url is an `http(s)` link the model service can reach,

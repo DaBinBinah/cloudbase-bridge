@@ -666,6 +666,34 @@ test("client-side timeout maps to 504 and network errors to 502", async () => {
 
 /* ---------------- provider.models ---------------- */
 
+test("reasoning is opt-in, discovered per deployment, and forwarded only to upgraded functions", async () => {
+  const { hooks } = await makePlugin();
+  const send = await loaderFetch(hooks);
+  const base = { hy4: { capabilities: { reasoning: false } } };
+  let ping = { ok: true, models: ["hy4"], reasoningLevels: { hy4: ["none", "high"] } };
+  const gw = mockGateway(async (_url, init) => Response.json(JSON.parse(init.body).action === "ping" ? ping : aiProxyCompletion()));
+  try {
+    const models = await hooks.provider.models({ models: base }, { auth: fakeAuth() });
+    assert.equal(models.hy4.capabilities.reasoning, true);
+    assert.deepEqual(models.hy4.variants, { none: { reasoningEffort: "none" }, high: { reasoningEffort: "high" } });
+    assert.equal(base.hy4.capabilities.reasoning, false);
+    const body = options => chatBody({ model: "cloudbase/hy4", ...options });
+    for (const options of [{ reasoning_effort: "high" }, { thinking: { type: "disabled" } }]) {
+      assert.equal((await send(body(options))).status, 200);
+      const event = JSON.parse(gw.calls.at(-1).init.body);
+      assert.deepEqual(event, { action: "chat", model: "hy4", messages: [{ role: "user", content: "hi" }], ...options });
+    }
+    ping = { ok: true, models: ["hy4"] };
+    assert.deepEqual(await hooks.provider.models({ models: base }, { auth: fakeAuth() }), base);
+    for (const [options, status, action] of [[{ reasoning_effort: "high" }, 400, "ping"], [{}, 200, "chat"]]) {
+      const before = gw.calls.length;
+      assert.equal((await send(body(options))).status, status);
+      assert.equal(gw.calls.length, before + 1);
+      assert.equal(JSON.parse(gw.calls.at(-1).init.body).action, action);
+    }
+  } finally { gw.restore(); }
+});
+
 test("provider.models: a ping-only model is built in the host's model shape", async () => {
   const { hooks } = await makePlugin();
   // Shape the host passes to provider.models (OpenCode Model), with hy3 and
