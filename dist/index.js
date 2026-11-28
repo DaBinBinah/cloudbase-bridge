@@ -698,6 +698,9 @@ async function bridgeFetch(input, init) {
     if (!isImage && (event.reasoning_effort != null || event.thinking != null)) {
         try {
             const ping = await invokePing(cfg, signal);
+            if (Array.isArray(ping.models) && !ping.models.includes(model)) {
+                return errorResponse(404, `Model ${model} is not allowed by ${functionName}.`, { code: "MODEL_NOT_ALLOWED" });
+            }
             if (!reasoningLevels(ping, model).length) {
                 return errorResponse(400, `The deployed ${functionName} does not advertise reasoning controls for ${model}. Update the function or omit the reasoning option.`, { code: "REASONING_UNAVAILABLE" });
             }

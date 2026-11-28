@@ -706,6 +706,11 @@ test("reasoning is opt-in, discovered per deployment, and forwarded only to upgr
       assert.equal(gw.calls.length, before + 1);
       assert.equal(JSON.parse(gw.calls.at(-1).init.body).action, action);
     }
+    ping = { ok: true, models: ["hy3"], reasoningLevels: { hy3: ["none", "low", "high"] } };
+    const denied = await send(body({ reasoning_effort: "high" }));
+    assert.equal(denied.status, 404);
+    assert.equal((await denied.json()).error.code, "MODEL_NOT_ALLOWED");
+    assert.equal(JSON.parse(gw.calls.at(-1).init.body).action, "ping");
   } finally { gw.restore(); }
 });
 
