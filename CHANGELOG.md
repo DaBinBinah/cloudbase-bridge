@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project uses
 [SemVer](https://semver.org/).
 
+## [0.2.12] - 2026-11-28
+
+- Magpie can now offer model-specific thinking levels from `aiProxy`. DSH **Off** explicitly disables thinking; **High** requests it. Disabling the level selector in Magpie instead leaves thinking up to the model.
+- To use this feature, update the plugin, deploy the [unified `aiProxy` ZIP](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/v0.2.12/aiProxy-unified-with-deps.zip), and refresh models. With no reasoning fields in a chat request the existing behavior is unchanged, including for 0.2.4 clients. Image generation does not receive reasoning fields.
+
 ## [0.2.11] - 2026-11-27
 
 - Deploy a single `aiProxy` ZIP for chat, image input and optional image generation. Existing split deployments keep working. The plugin checks capabilities before sending an image prompt; it never retries a submitted generation against another function.

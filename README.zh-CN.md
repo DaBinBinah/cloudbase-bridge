@@ -8,7 +8,13 @@
 
 > 社区项目：和 Magpie、腾讯云都没有关系，也没有经过 Magpie 官方审核或收录。
 
-**思考等级（测试版）**：需同时更新测试插件和 `aiProxy`；旧正式版 ZIP 不传此参数。部署后在 Magpie 点「重新获取模型」。模型设置里的勾选表示可供客户端选择的档位，并不强制每次使用。客户端不指定时不传参数，生图也不传。
+## 思考等级（0.2.12 起，可选）
+
+**只想照常聊天？什么都不用改。** 老用户（包括 `0.2.4`）不必升级或勾选思考档位。聊天请求不带思考参数时，插件不添加，模型按自己的默认方式回答。
+
+**想让 DSH 控制思考？** 在实际提供服务的那台 Magpie 更新 CloudBase Bridge，部署本版[合并云函数 ZIP](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/v0.2.12/aiProxy-unified-with-deps.zip)。在 `aiProxy` 运行 `{"action":"ping"}`，确认返回 `reasoningLevels`，再在 Magpie 点「重新获取模型」。已经部署过思考测试包且 `ping` 返回对应档位的，不用重复部署。
+
+以 `hy4-flash` 为例：在 Magpie 模型设置里勾「不思考」和「高」，是**让用户可以选**，不是把两档同时打开。在 DSH 选 **Off** 会明确要求模型关闭思考；选 **High** 会要求它深度思考。同一道题两档可能答得一样，区别看有没有返回思考内容。**在 Magpie 关闭思考等级**则是不传档位，不是要求模型关闭思考；`hy4-flash` 默认按高档回答。
 
 | 模型 | 提供给客户端的档位 |
 |---|---|
@@ -16,7 +22,7 @@
 | `hy3` | 不思考、低、高（带工具时，低可能被上游映射为高） |
 | `deepseek-v4.1-flash`、`deepseek-v4.1-flash-1017` | 不思考、低、高、最高 |
 
-依据：[CloudBase 模型表](https://docs.cloudbase.net/ai/available-models)、[腾讯混元逐型号参数](https://cloud.tencent.com/document/product/1823/131208)、[DeepSeek 思考模式](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/)。腾讯不同页面对部分档位的说明不一致，表中只展示双方明确支持的档位。
+生图模型不传思考参数。DSH 使用自定义模型时，`Off` 对应的 API 值应为 `none`，`High` 为 `high`。部分 DSH 配置会让 **Default** 和 **Off** 都发 `none`；想使用云端默认值，可在 Magpie 关闭该模型的档位转发。参考：[CloudBase 模型表](https://docs.cloudbase.net/ai/available-models)、[腾讯混元逐型号参数](https://cloud.tencent.com/document/product/1823/131208)、[DeepSeek 思考模式](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/)。
 
 ![「小程序成长计划」赠送额度：10 亿 Token + 10 万张生图（云开发控制台截图）](docs/images/growth-plan-quota.png)
 
@@ -47,13 +53,13 @@ Agent ─► magpie 网关 ─► 插件 ── POST /v1/functions/aiProxy ─�
 
 **DSH 生图（插件 0.2.9 起支持，默认关闭）：** 只用聊天的用户，包括仍在用 0.2.4 的用户，都不用改配置、升级插件或重新部署。
 
-1. **新用户只部署一个 `aiProxy`**：下载[聊天＋生图合并 ZIP](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/aiproxy-2026.11.27/aiProxy-unified-with-deps.zip)，上传到普通云函数 `aiProxy`（Node.js 20、`index.main`、关闭自动安装依赖，生图建议超时 600 秒）。在函数测试中执行 `{"action":"checkImage","prompt":"画猫，2K，5:2"}`，应返回 `requestedSize: "2560x1024"`、`modelCalled: false`；不指定比例和分辨率时默认 `1024x1024`。
+1. **新用户只部署一个 `aiProxy`**：下载[聊天＋生图合并 ZIP](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/v0.2.12/aiProxy-unified-with-deps.zip)，上传到普通云函数 `aiProxy`（Node.js 20、`index.main`、关闭自动安装依赖，生图建议超时 600 秒）。在函数测试中执行 `{"action":"checkImage","prompt":"画猫，2K，5:2"}`，应返回 `requestedSize: "2560x1024"`、`modelCalled: false`；不指定比例和分辨率时默认 `1024x1024`。
 2. 在 Magpie 插件选项中打开「启用 DSH 生图」，在 DSH 选择 `cloudbase/hy-image-v3.5-preview`，输入文字提示词。
 3. 从 0.2.10 起，DSH 网页版的新回复直接显示图片，也可点「打开原图」另存。如果仍只看到网址，打开 Magpie 插件选项「始终显示图片预览」并保存；即使请求不带 DSH 标记，插件也会返回 Markdown 图片。此开关影响所有经该配置生图的客户端，不改变聊天或旧回复。需要原始 HTTPS 链接的非 DSH 客户端请保持此项关闭。
 
 **老用户不必迁移。** 插件 0.2.11 在生图前用 `ping` 检查已配置的聊天函数；支持生图就调用它，未声明支持就沿用独立 `generateImage`。探测失败不会生图，生图失败不会换函数重发。插件 0.2.9/0.2.10 仍依赖独立函数，仍有旧客户端时不要删除它。Magpie 的生图开关不代替云端鉴权；有权直接调用合并函数的客户端也有权发起生图。
 
-**2K / 4K：** 使用上面的新版云函数 ZIP 即可，Magpie 插件保持 0.2.11。把 `2K` 或 `4K` 用逗号单独隔开，例如 `画猫，4K，5:2`。方图边长分别为 2048、4096 像素；非方图长边分别为 2560、3840 像素，短边按比例取最接近的整数。不写分辨率，尺寸沿用原规则。先用 `checkImage` 查看实际请求尺寸，不会消耗生图额度。
+**2K / 4K：** 使用上面的新版云函数 ZIP 即可，`0.2.11` 用户不必为了图片尺寸升级插件。把 `2K` 或 `4K` 用逗号单独隔开，例如 `画猫，4K，5:2`。方图边长分别为 2048、4096 像素；非方图长边分别为 2560、3840 像素，短边按比例取最接近的整数。不写分辨率，尺寸沿用原规则。先用 `checkImage` 查看实际请求尺寸，不会消耗生图额度。
 
 **生图标识（可选）：** 把 `IMAGE_FOOTNOTE_MODE` 设在实际生图的函数上（环境变量不会从 `generateImage` 自动复制到 `aiProxy`）。`empty`（默认）传空字符串，`space` 传一个半角空格，`omit` 不传字段。合并包用 `{"action":"checkImage"}`，独立函数用 `{"action":"check"}` 查看 `footnoteMode`，均不调用模型。[CloudBase 文档](https://docs.cloudbase.net/ai/image-model/custom-watermark)只定义了自定义水印，不保证空格的效果；发布或分享时仍须遵守[生成内容标识要求](https://cloud.tencent.com/document/product/301/97822)。
 
@@ -69,7 +75,7 @@ Agent ─► magpie 网关 ─► 插件 ── POST /v1/functions/aiProxy ─�
 
 ## 部署 aiProxy
 
-需要聊天和生图时，使用上面的[合并 ZIP](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/aiproxy-2026.11.27/aiProxy-unified-with-deps.zip) 即可。**以下 CLI 仅部署聊天／看图函数，不要用它覆盖合并包。** [聊天函数操作指南](cloudfunctions/aiProxy/README.md)：
+需要聊天和生图时，使用上面的[合并 ZIP](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/v0.2.12/aiProxy-unified-with-deps.zip) 即可。**以下 CLI 仅部署聊天／看图函数，不要用它覆盖合并包。** [聊天函数操作指南](cloudfunctions/aiProxy/README.md)：
 
 ```bash
 cp cloudbaserc.example.json cloudbaserc.json   # 把 envId 改成你的

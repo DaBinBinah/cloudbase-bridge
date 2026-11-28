@@ -9,7 +9,7 @@ the plugin**, under the name **`aiProxy`** (or a custom name you also set
 during plugin login).
 
 This directory is the **chat-only source deployment** (including image input).
-For chat and image generation on one function use the [unified release ZIP](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/aiproxy-2026.11.27/aiProxy-unified-with-deps.zip) instead. See the [deployment settings](../../README.md#models).
+For chat and image generation on one function use the [unified release ZIP](https://github.com/DaBinBinah/cloudbase-bridge/releases/download/v0.2.12/aiProxy-unified-with-deps.zip) instead. See the [deployment settings](../../README.md#models).
 Calling the SDK from a cloud function does not change the original caller's eligibility for [CloudBase gift quota](https://docs.cloudbase.net/ai/ai-inspire-plan-usage-governance).
 
 ## Files
@@ -54,7 +54,7 @@ sends it, and is forwarded back to the model on every assistant message
 that carries it (such models reject a tool-enabled request whose earlier
 turns lack their reasoning).
 
-The reasoning preview accepts `reasoning_effort` and/or `thinking: {type: "enabled" | "disabled"}`.
+The function in the v0.2.12 release accepts `reasoning_effort` and/or `thinking: {type: "enabled" | "disabled"}`.
 `none` switches thinking off; omitted controls preserve the model default. Conflicting or unsupported settings fail before `generateText`.
 
 Image input: a `user` message may carry OpenAI `image_url` parts next to
