@@ -666,6 +666,21 @@ test("client-side timeout maps to 504 and network errors to 502", async () => {
 
 /* ---------------- provider.models ---------------- */
 
+test("reasoning probe preserves gateway auth, quota, and timeout errors without invoking chat", async () => {
+  const { hooks } = await makePlugin();
+  const send = await loaderFetch(hooks);
+  for (const [code, status, expected] of [["TOKEN_EXPIRED", 403, 401], ["EXCEED_QUOTA", 429, 429], ["FUNCTIONS_TIME_LIMIT_EXCEEDED", 502, 504]]) {
+    const gw = mockGateway(async () => Response.json({ code, requestId: "probe-request" }, { status }));
+    try {
+      const result = await send(chatBody({ reasoning_effort: "high" }));
+      assert.equal(result.status, expected);
+      assert.equal((await result.json()).error.code, code);
+      assert.equal(gw.calls.length, 1);
+      assert.equal(JSON.parse(gw.calls[0].init.body).action, "ping");
+    } finally { gw.restore(); }
+  }
+});
+
 test("reasoning is opt-in, discovered per deployment, and forwarded only to upgraded functions", async () => {
   const { hooks } = await makePlugin();
   const send = await loaderFetch(hooks);

@@ -702,9 +702,14 @@ async function bridgeFetch(input, init) {
                 return errorResponse(400, `The deployed ${functionName} does not advertise reasoning controls for ${model}. Update the function or omit the reasoning option.`, { code: "REASONING_UNAVAILABLE" });
             }
         }
-        catch {
+        catch (err) {
             if (init?.signal?.aborted)
                 throw init.signal.reason;
+            if (err instanceof PingHttpError)
+                return err.response;
+            if (timeoutSignal.aborted || (err instanceof Error && err.name === "TimeoutError")) {
+                return errorResponse(504, "Reasoning capability check timed out; no chat request was sent.", { code: "INVOKE_TIMEOUT" });
+            }
             return errorResponse(502, "Could not check reasoning support; no chat request was sent.", { code: "REASONING_PROBE_FAILED" });
         }
     }
@@ -815,13 +820,21 @@ async function invokePing(cfg, signal) {
         signal: combineSignals(signal, AbortSignal.timeout(15_000)),
     });
     if (!upstream.ok) {
-        throw new Error(`ping failed with HTTP ${upstream.status}`);
+        const body = parseGatewayErrorBody(await upstream.text().catch(() => ""));
+        throw new PingHttpError(mapGatewayError(upstream.status, body, cfg.functionName));
     }
     const parsed = await upstream.json();
     if (!isPlainObject(parsed) || parsed.ok !== true) {
         throw new Error("ping returned an unexpected body");
     }
     return parsed;
+}
+class PingHttpError extends Error {
+    response;
+    constructor(response) {
+        super(`ping failed with HTTP ${response.status}`);
+        this.response = response;
+    }
 }
 /* ------------------------------------------------------------------ *
  * Plugin entry.                                                      *
