@@ -36,7 +36,7 @@
  * this file is bundled standalone into dist/index.js).               *
  * ------------------------------------------------------------------ */
 
-export const PLUGIN_VERSION = "0.2.11" as const;
+export const PLUGIN_VERSION = "0.2.12" as const;
 
 /** Requested provider id. If Magpie already uses it, the host renames the
  * provider to `cloudbase-plugin`; both prefixes are accepted on input. */
@@ -146,6 +146,7 @@ function accountModelEntry(id: string, base: Record<string, Json>): Json {
     limit,
     capabilities: {
       ...capabilities,
+      reasoning: false,
       toolcall: true,
       input: { ...(isPlainObject(capabilities.input) ? capabilities.input : {}), text: true, image: spec ? spec.image : true },
     },
@@ -227,6 +228,8 @@ interface ChatCompletionsBody {
   stream?: unknown;
   temperature?: unknown;
   top_p?: unknown;
+  reasoning_effort?: unknown;
+  thinking?: unknown;
   max_tokens?: unknown;
   max_completion_tokens?: unknown;
   tools?: unknown;
@@ -525,6 +528,8 @@ function mapFunctionError(
 
 function buildInvokeEvent(body: ChatCompletionsBody, model: string): Json {
   const event: Json = { action: "chat", model, messages: body.messages };
+  if (body.reasoning_effort != null) event.reasoning_effort = body.reasoning_effort;
+  if (body.thinking != null) event.thinking = body.thinking;
   if (typeof body.temperature === "number" && Number.isFinite(body.temperature)) {
     event.temperature = body.temperature;
   }
@@ -898,6 +903,24 @@ async function bridgeFetch(this: BridgeContext, input: unknown, init?: { method?
   const timeoutSignal = AbortSignal.timeout(cfg.timeoutMs);
   const signal = combineSignals(init?.signal, timeoutSignal);
   let functionName = cfg.functionName;
+  if (!isImage && (event.reasoning_effort != null || event.thinking != null)) {
+    try {
+      const ping = await invokePing(cfg, signal);
+      if (Array.isArray(ping.models) && !ping.models.includes(model)) {
+        return errorResponse(404, `Model ${model} is not allowed by ${functionName}.`, { code: "MODEL_NOT_ALLOWED" });
+      }
+      if (!reasoningLevels(ping, model).length) {
+        return errorResponse(400, `The deployed ${functionName} does not advertise reasoning controls for ${model}. Update the function or omit the reasoning option.`, { code: "REASONING_UNAVAILABLE" });
+      }
+    } catch (err) {
+      if (init?.signal?.aborted) throw init.signal.reason;
+      if (err instanceof PingHttpError) return err.response;
+      if (timeoutSignal.aborted || (err instanceof Error && err.name === "TimeoutError")) {
+        return errorResponse(504, "Reasoning capability check timed out; no chat request was sent.", { code: "INVOKE_TIMEOUT" });
+      }
+      return errorResponse(502, "Could not check reasoning support; no chat request was sent.", { code: "REASONING_PROBE_FAILED" });
+    }
+  }
   if (isImage) {
     try {
       const ping = await invokePing(cfg, signal);
@@ -1022,6 +1045,12 @@ interface PingResult {
   env?: string | null;
   models?: unknown;
   capabilities?: unknown;
+  reasoningLevels?: unknown;
+}
+
+function reasoningLevels(ping: PingResult, model: string): string[] {
+  const levels = isPlainObject(ping.reasoningLevels) ? ping.reasoningLevels[model] : undefined;
+  return Array.isArray(levels) ? levels.filter((l): l is string => ["none", "low", "high", "max"].includes(l)) : [];
 }
 
 async function invokePing(cfg: AccountConfig, signal?: AbortSignal): Promise<PingResult> {
@@ -1037,13 +1066,20 @@ async function invokePing(cfg: AccountConfig, signal?: AbortSignal): Promise<Pin
     signal: combineSignals(signal, AbortSignal.timeout(15_000)),
   });
   if (!upstream.ok) {
-    throw new Error(`ping failed with HTTP ${upstream.status}`);
+    const body = parseGatewayErrorBody(await upstream.text().catch(() => ""));
+    throw new PingHttpError(mapGatewayError(upstream.status, body, cfg.functionName));
   }
   const parsed: unknown = await upstream.json();
   if (!isPlainObject(parsed) || parsed.ok !== true) {
     throw new Error("ping returned an unexpected body");
   }
   return parsed as PingResult;
+}
+
+class PingHttpError extends Error {
+  constructor(readonly response: Response) {
+    super(`ping failed with HTTP ${response.status}`);
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -1185,6 +1221,15 @@ export const CloudbaseBridge = async (
           for (const id of pingModels) {
             if (id === IMAGE_MODEL) continue;
             const entry: Json = base[id] ? { ...base[id] } : accountModelEntry(id, base);
+            const levels = reasoningLevels(ping, id);
+            if (levels.length) {
+              if (isPlainObject(entry.capabilities)) entry.capabilities = { ...entry.capabilities, reasoning: true };
+              else entry.reasoning = true;
+              const variants = isPlainObject(entry.variants) ? entry.variants : {};
+              entry.variants = Object.fromEntries(levels.map(level => [level, {
+                ...(isPlainObject(variants[level]) ? variants[level] : {}), reasoningEffort: level,
+              }]));
+            }
             // The deployed function's allowlist explicitly accepts this id
             // (it just said so in the ping), so a static placeholder
             // `disabled` flag from the config-hook catalog must not survive.

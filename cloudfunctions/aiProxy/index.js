@@ -76,6 +76,15 @@ const MAX_TOTAL_MESSAGE_CHARS = 6 * 1024 * 1024;
 const TEXT_ONLY_MODELS = new Set(["hy3"]);
 const IMAGE_MODEL_HINT = "hy4, hy4-flash, deepseek-v4.1-flash";
 
+const HY4_LEVELS = ["none", "high"];
+const DEEPSEEK_LEVELS = ["none", "low", "high", "max"];
+const REASONING_LEVELS = new Map([
+  ["hy4", HY4_LEVELS], ["hy4-flash", HY4_LEVELS], ["hy4-preview", HY4_LEVELS],
+  ["hy3", ["none", "low", "high"]],
+  ["deepseek-v4.1-flash", DEEPSEEK_LEVELS], ["deepseek-v4.1-flash-1017", DEEPSEEK_LEVELS],
+]);
+const DEEPSEEK_ALIASES = new Map([["minimal", "low"], ["medium", "high"], ["xhigh", "high"], ["ultra", "max"]]);
+
 const MAX_MODEL_ID_LENGTH = 64;
 const MAX_TOOLS = 128;
 const MAX_TOOL_CALLS_PER_MESSAGE = 64;
@@ -404,6 +413,25 @@ function validateChatEvent(event) {
   }
 
   const params = { model, messages };
+  if (event.reasoning_effort != null || event.thinking != null) {
+    const levels = REASONING_LEVELS.get(model);
+    if (!levels) return errorEnvelope("INVALID_REQUEST", `No reasoning controls are configured for ${model}.`);
+    const mode = event.thinking?.type;
+    if (event.thinking != null && (!isPlainObject(event.thinking) || !["enabled", "disabled"].includes(mode))) {
+      return errorEnvelope("INVALID_REQUEST", "thinking.type must be enabled or disabled.");
+    }
+    let effort = event.reasoning_effort;
+    if (levels === DEEPSEEK_LEVELS) effort = DEEPSEEK_ALIASES.get(effort) ?? effort;
+    else if (effort === "no_think") effort = "none";
+    if (effort != null && !levels.includes(effort)) {
+      return errorEnvelope("INVALID_REQUEST", `Supported reasoning_effort for ${model}: ${levels.join(", ")}.`);
+    }
+    if (mode && effort != null && (mode === "disabled") !== (effort === "none")) {
+      return errorEnvelope("INVALID_REQUEST", "thinking.type conflicts with reasoning_effort.");
+    }
+    params.thinking = { type: mode ?? (effort === "none" ? "disabled" : "enabled") };
+    if (effort != null && effort !== "none") params.reasoningEffort = effort;
+  }
   if (typeof event.temperature === "number" && Number.isFinite(event.temperature)) {
     if (event.temperature < 0 || event.temperature > 2) {
       return errorEnvelope("INVALID_REQUEST", "event.temperature must be between 0 and 2.");
@@ -541,12 +569,14 @@ function buildChatCompletion(result, model, requestId, inputMessageCount) {
 }
 
 function pingResult() {
+  const models = allowedModels();
   return {
     ok: true,
     service: "aiProxy",
     version: AI_PROXY_VERSION,
     env: process.env.TCB_ENV || null,
-    models: allowedModels(),
+    models,
+    reasoningLevels: Object.fromEntries(models.filter(id => REASONING_LEVELS.has(id)).map(id => [id, REASONING_LEVELS.get(id)])),
     timestamp: new Date().toISOString(),
   };
 }
@@ -566,6 +596,8 @@ function buildGenerateInput(params) {
   return {
     model: params.model,
     messages: params.messages,
+    ...(params.thinking && { thinking: params.thinking }),
+    ...(params.reasoningEffort && { reasoning_effort: params.reasoningEffort }),
     ...(typeof params.temperature === "number" ? { temperature: params.temperature } : {}),
     ...(typeof params.topP === "number" ? { topP: params.topP } : {}),
     ...(typeof params.maxTokens === "number" ? { max_tokens: params.maxTokens } : {}),

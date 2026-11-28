@@ -13,6 +13,48 @@ const require = createRequire(import.meta.url);
 const aiProxy = require("../cloudfunctions/aiProxy/index.js");
 const { _internal } = aiProxy;
 
+test("each advertised effort reaches generateText; omitted controls leave the SDK defaults intact", () => {
+  const { reasoningLevels } = _internal.pingResult();
+  function sdkInput(model, options) {
+    const result = _internal.validateChatEvent({ model, messages: [{ role: "user", content: "hi" }], ...options });
+    assert.ifError(result.error);
+    return _internal.buildGenerateInput(result.params);
+  }
+  for (const [model, levels] of Object.entries(reasoningLevels)) {
+    const plain = sdkInput(model, {});
+    assert.ok(!("thinking" in plain) && !("reasoning_effort" in plain));
+    for (const effort of levels) {
+      const data = sdkInput(model, { reasoning_effort: effort });
+      assert.deepEqual(data.thinking, { type: effort === "none" ? "disabled" : "enabled" });
+      assert.equal(data.reasoning_effort, effort === "none" ? undefined : effort);
+    }
+    assert.deepEqual(sdkInput(model, { thinking: { type: "enabled" } }), { ...plain, thinking: { type: "enabled" } });
+  }
+  assert.deepEqual(reasoningLevels["hy4-flash"], ["none", "high"]);
+  assert.deepEqual(reasoningLevels.hy3, ["none", "low", "high"]);
+  assert.deepEqual(reasoningLevels["deepseek-v4.1-flash-1017"], ["none", "low", "high", "max"]);
+  assert.equal(reasoningLevels["hy-image-v3.5-preview"], undefined);
+  for (const [alias, canonical] of [["minimal", "low"], ["medium", "high"], ["xhigh", "high"], ["ultra", "max"]]) {
+    assert.equal(sdkInput("deepseek-v4.1-flash", { reasoning_effort: alias }).reasoning_effort, canonical);
+  }
+  assert.deepEqual(sdkInput("hy4", { reasoning_effort: "no_think" }).thinking, { type: "disabled" });
+});
+
+test("reject unsupported or contradictory settings before calling the model", async t => {
+  const send = t.mock.fn();
+  aiProxy._callModelOverride = send;
+  try {
+    for (const options of [{ reasoning_effort: "low" }, { reasoning_effort: {} }, { reasoning_effort: 1 },
+      { thinking: { type: "adaptive" } }, { thinking: "false" },
+      { thinking: { type: "disabled" }, reasoning_effort: "high" },
+      { thinking: { type: "enabled" }, reasoning_effort: "none" }]) {
+      const r = await aiProxy.main({ model: "hy4", messages: [{ role: "user", content: "hi" }], ...options });
+      assert.equal(r.error.code, "INVALID_REQUEST");
+    }
+    assert.equal(send.mock.callCount(), 0);
+  } finally { delete aiProxy._callModelOverride; }
+});
+
 /* ---------------- validateChatEvent ---------------- */
 
 test("validateChatEvent accepts a valid chat event", () => {
